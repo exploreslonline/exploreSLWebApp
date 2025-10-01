@@ -2895,7 +2895,7 @@ cron.schedule('0 1 * * *', async () => {
 
 // Database connection
 mongoose
-  .connect(mongodbURL, {})
+  .connect(process.env.MONGOURL, {})
   .then(() => {
     console.log('✅ App connected to database');
     app.listen(PORT, () => {
