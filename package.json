@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@stripe/react-stripe-js": "^2.7.3",
+    "@stripe/stripe-js": "^4.1.0",
+    "@vercel/speed-insights": "^1.0.12",
+    "crypto-js": "^4.2.0",
+    "react-router-dom": "^6.25.1",
+    "styled-components": "^6.1.11"
+  }
+}
