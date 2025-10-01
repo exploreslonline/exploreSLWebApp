@@ -4,6 +4,7 @@ import Subscription from '../models/subscription.js';
 import SubscriptionHistory from '../models/subscription_history.js';
 import SubscriptionLog from '../models/subscription_log.js';
 import {checkUserPlanLimits } from '../controllers/user_controller.js'
+import Offer from '../models/offer.js';
 
 const router = express.Router();
 
@@ -656,7 +657,6 @@ router.post('/delete-selected-items', async (req, res) => {
     });
   }
 });
-// Route to get user profile by ID (for when you have token with user ID)
 router.get('/profile/:userId', verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
