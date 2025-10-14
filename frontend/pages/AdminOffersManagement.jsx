@@ -284,6 +284,45 @@ const AdminOffersManagement = () => {
     offerCardBody: {
       padding: '2rem',
     },
+    offerImageContainer: {
+      width: '100%',
+      marginBottom: '2rem',
+      borderRadius: '12px',
+      overflow: 'hidden',
+      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+      border: '1px solid #e2e8f0',
+      background: '#f8fafc',
+    },
+    offerImage: {
+      width: '100%',
+      height: 'auto',
+      maxHeight: '400px',
+      objectFit: 'contain',
+      display: 'block',
+      backgroundColor: '#ffffff',
+    },
+    noImagePlaceholder: {
+      width: '100%',
+      padding: '3rem',
+      background: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)',
+      textAlign: 'center',
+      color: '#94a3b8',
+      fontSize: '1rem',
+      fontWeight: '600',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: '0.5rem',
+    },
+    imageLoadError: {
+      width: '100%',
+      padding: '2rem',
+      background: '#fee2e2',
+      textAlign: 'center',
+      color: '#dc2626',
+      fontSize: '0.875rem',
+      fontWeight: '500',
+    },
     sectionsContainer: {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))',
@@ -385,7 +424,6 @@ const AdminOffersManagement = () => {
       borderTop: '2px solid #e2e8f0',
       flexWrap: 'wrap',
     },
-    // Enhanced Button Styles
     btn: {
       position: 'relative',
       padding: '0.875rem 2rem',
@@ -1014,6 +1052,35 @@ const AdminOffersManagement = () => {
               </div>
 
               <div style={styles.offerCardBody}>
+                {/* Offer Image Display */}
+                {offer.imageUrl ? (
+                  <div style={styles.offerImageContainer}>
+                    <img 
+                      src={offer.imageUrl} 
+                      alt={offer.title}
+                      style={styles.offerImage}
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        const errorDiv = e.target.parentElement.querySelector('.image-error');
+                        if (errorDiv) errorDiv.style.display = 'block';
+                      }}
+                    />
+                    <div 
+                      className="image-error"
+                      style={{...styles.imageLoadError, display: 'none'}}
+                    >
+                      ⚠️ Image failed to load
+                    </div>
+                  </div>
+                ) : (
+                  <div style={styles.offerImageContainer}>
+                    <div style={styles.noImagePlaceholder}>
+                      <span style={{fontSize: '3rem'}}>📷</span>
+                      <span>No image uploaded</span>
+                    </div>
+                  </div>
+                )}
+
                 <div style={styles.sectionsContainer}>
                   {/* Business Details Section */}
                   <div style={styles.section}>
@@ -1440,16 +1507,6 @@ const AdminOffersManagement = () => {
             100% { transform: scale(1); }
           }
 
-          @keyframes shimmer {
-            0% { background-position: -200% center; }
-            100% { background-position: 200% center; }
-          }
-
-          @keyframes glow {
-            0%, 100% { box-shadow: 0 0 20px rgba(102, 126, 234, 0.3); }
-            50% { box-shadow: 0 0 30px rgba(102, 126, 234, 0.6); }
-          }
-
           /* Enhanced Button Styles */
           .btn-enhanced {
             position: relative;
@@ -1475,27 +1532,8 @@ const AdminOffersManagement = () => {
             z-index: 1;
           }
 
-          .btn-enhanced::after {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 0;
-            height: 0;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.2);
-            transform: translate(-50%, -50%);
-            transition: width 0.3s ease, height 0.3s ease;
-            z-index: 0;
-          }
-
           .btn-enhanced:hover::before {
             left: 100%;
-          }
-
-          .btn-enhanced:active::after {
-            width: 300px;
-            height: 300px;
           }
 
           .btn-enhanced:hover:not(:disabled) {
@@ -1545,11 +1583,6 @@ const AdminOffersManagement = () => {
           }
 
           /* Filter Tab Enhancements */
-          .filter-tab-enhanced {
-            position: relative;
-            z-index: 1;
-          }
-
           .filter-tab-enhanced:hover:not(.active) {
             background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
             color: #334155;
@@ -1613,18 +1646,6 @@ const AdminOffersManagement = () => {
             box-shadow: 
               0 0 0 4px rgba(102, 126, 234, 0.2),
               0 8px 32px rgba(102, 126, 234, 0.4);
-          }
-
-          /* Enhanced Ripple Effect */
-          @keyframes ripple {
-            0% {
-              transform: scale(0);
-              opacity: 1;
-            }
-            100% {
-              transform: scale(4);
-              opacity: 0;
-            }
           }
 
           .btn-enhanced:active {
@@ -1756,18 +1777,6 @@ const AdminOffersManagement = () => {
             }
           }
 
-          /* Enhanced gradient animations */
-          @keyframes gradientShift {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-          }
-
-          .header {
-            background-size: 200% 200%;
-            animation: gradientShift 6s ease infinite;
-          }
-
           /* Card entrance animations with stagger */
           .offer-card {
             animation: slideInUp 0.6s ease-out;
@@ -1816,67 +1825,6 @@ const AdminOffersManagement = () => {
             0% { opacity: 1; }
             50% { opacity: 0.7; }
             100% { opacity: 1; }
-          }
-
-          /* Button Loading Animation */
-          .btn-enhanced.loading {
-            pointer-events: none;
-            position: relative;
-          }
-
-          .btn-enhanced.loading::before {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 16px;
-            height: 16px;
-            margin: -8px 0 0 -8px;
-            border: 2px solid transparent;
-            border-top: 2px solid currentColor;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-          }
-
-          /* Micro-interactions */
-          .btn-enhanced {
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-          }
-
-          .btn-enhanced:active:not(:disabled) {
-            transform: translateY(-1px) scale(0.98);
-            transition: all 0.1s ease;
-          }
-
-          /* Enhanced shadow depths */
-          .btn-approve {
-            box-shadow: 
-              0 4px 14px 0 rgba(16, 185, 129, 0.39),
-              inset 0 1px 0 rgba(255, 255, 255, 0.2);
-          }
-
-          .btn-decline {
-            box-shadow: 
-              0 4px 14px 0 rgba(239, 68, 68, 0.39),
-              inset 0 1px 0 rgba(255, 255, 255, 0.2);
-          }
-
-          .btn-edit {
-            box-shadow: 
-              0 4px 14px 0 rgba(245, 158, 11, 0.39),
-              inset 0 1px 0 rgba(255, 255, 255, 0.2);
-          }
-
-          .btn-delete {
-            box-shadow: 
-              0 4px 14px 0 rgba(100, 116, 139, 0.39),
-              inset 0 1px 0 rgba(255, 255, 255, 0.2);
-          }
-
-          .btn-secondary {
-            box-shadow: 
-              0 4px 14px 0 rgba(148, 163, 184, 0.29),
-              inset 0 1px 0 rgba(255, 255, 255, 0.6);
           }
 
           /* Smooth color transitions */

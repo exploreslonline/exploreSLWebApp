@@ -14,10 +14,19 @@ const offerSchema = new mongoose.Schema({
   endDate: { type: Date },
   isActive: { type: Boolean, default: true },
 
-  // Admin approval fields - FIXED ENUM VALUES
+  // Image field - stores compressed image as Buffer
+  image: {
+    data: Buffer,
+    contentType: String,
+    size: Number, // Store final size in bytes
+    originalName: String,
+    uploadedAt: Date
+  },
+
+  // Admin approval fields
   adminStatus: {
     type: String,
-    enum: ['pending', 'approved', 'declined'], // ✅ Fixed to match your API logic
+    enum: ['pending', 'approved', 'declined'],
     default: 'pending'
   },
   adminComments: { type: String },
@@ -35,11 +44,11 @@ const offerSchema = new mongoose.Schema({
 });
 
 offerSchema.index({ userId: 1, status: 1 });
-offerSchema.index({ adminStatus: 1 }); // ✅ Added useful index
-offerSchema.index({ userId: 1, adminStatus: 1 }); // ✅ Added compound index
+offerSchema.index({ adminStatus: 1 });
+offerSchema.index({ userId: 1, adminStatus: 1 });
 offerSchema.plugin(AutoIncrement, { inc_field: 'offerId' });
+
 const Offer = mongoose.model('Offer', offerSchema);
 
-
-export  {offerSchema};
+export { offerSchema };
 export default Offer;

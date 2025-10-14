@@ -70,7 +70,9 @@ const BusinessUserProfile = () => {
     startDate: '',
     endDate: '',
     category: '',
-    isActive: true
+    isActive: true,
+    image: null, // NEW: Add image field
+    imagePreview: null // NEW: For preview
   });
 
   const [profileForm, setProfileForm] = useState({
@@ -93,6 +95,39 @@ const BusinessUserProfile = () => {
     }));
   };
 
+
+
+  const handleOfferImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Validate file size (5MB max)
+      if (file.size > 5 * 1024 * 1024) {
+        showToastNotification('Image must be less than 5MB', 'error');
+        return;
+      }
+
+      // Validate file type
+      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+      if (!allowedTypes.includes(file.type)) {
+        showToastNotification('Only JPEG, PNG, and WebP images are allowed', 'error');
+        return;
+      }
+
+      // Create preview
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setOfferForm({
+          ...offerForm,
+          image: file,
+          imagePreview: reader.result
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+
+
   // ENHANCED: Check plan limits immediately after profile data loads
   const checkMandatoryPlanLimits = async (userId, subscriptionData, businessesData, offersData) => {
     try {
@@ -102,13 +137,13 @@ const BusinessUserProfile = () => {
         businesses: businessesData?.length,
         offers: offersData?.length
       });
-      
+
       // Only check for free plan users (planId === '1')
       if (subscriptionData?.planId === '1') {
         const limits = subscriptionUtils.getSubscriptionLimits(subscriptionData);
         const exceedsBusinesses = businessesData.length > limits.maxBusinesses;
         const exceedsOffers = offersData.length > limits.maxOffers;
-        
+
         console.log('Plan limits check:', {
           maxBusinesses: limits.maxBusinesses,
           maxOffers: limits.maxOffers,
@@ -117,7 +152,7 @@ const BusinessUserProfile = () => {
           exceedsBusinesses,
           exceedsOffers
         });
-        
+
         if (exceedsBusinesses || exceedsOffers) {
           const planData = {
             planName: subscriptionData.planName || 'Free',
@@ -129,18 +164,18 @@ const BusinessUserProfile = () => {
             exceedsOffers: exceedsOffers,
             exceedsLimits: true
           };
-          
+
           console.log('MANDATORY PLAN ENFORCEMENT TRIGGERED:', planData);
-          
+
           setPlanLimitData(planData);
           setMandatoryPlanEnforcement(true);
           setPlanEnforcementBlocked(true);
           setShowComprehensivePlanModal(true);
-          
+
           return true; // Plan limits exceeded
         }
       }
-      
+
       return false; // Plan limits OK
     } catch (error) {
       console.error('Error checking mandatory plan limits:', error);
@@ -182,11 +217,11 @@ const BusinessUserProfile = () => {
   // ENHANCED: Auto plan limit check on data changes
   const checkPlanLimitsAfterDataChange = async () => {
     if (!userDetails.userId || !subscription.planId) return;
-    
+
     const limits = getSubscriptionLimits();
     const exceedsBusinesses = businesses.length > limits.maxBusinesses;
     const exceedsOffers = offers.length > limits.maxOffers;
-    
+
     if (exceedsBusinesses || exceedsOffers) {
       const planData = {
         planName: subscription.planName || 'Free',
@@ -198,9 +233,9 @@ const BusinessUserProfile = () => {
         exceedsOffers: exceedsOffers,
         exceedsLimits: true
       };
-      
+
       setPlanLimitData(planData);
-      
+
       // Show popup automatically if limits exceeded
       setTimeout(() => {
         setShowPlanLimitModal(true);
@@ -212,7 +247,7 @@ const BusinessUserProfile = () => {
   const checkPlanLimits = async (userId, subscription) => {
     try {
       console.log('Checking plan limits for user:', userId);
-      
+
       const response = await axios.post('http://localhost:5555/api/user/check-plan-limits', {
         userId: userId,
         planId: subscription.planId
@@ -232,7 +267,7 @@ const BusinessUserProfile = () => {
     const limits = getSubscriptionLimits();
     const currentBusinesses = businesses.length;
     const currentOffers = offers.length;
-    
+
     const planData = {
       planName: subscription.planName || 'Free',
       maxBusinesses: limits.maxBusinesses,
@@ -243,7 +278,7 @@ const BusinessUserProfile = () => {
       exceedsOffers: currentOffers > limits.maxOffers,
       exceedsLimits: currentBusinesses > limits.maxBusinesses || currentOffers > limits.maxOffers
     };
-    
+
     setPlanLimitData(planData);
     setShowComprehensivePlanModal(true);
   };
@@ -431,6 +466,13 @@ const BusinessUserProfile = () => {
   };
 
   useEffect(() => {
+  // Auto-refresh offers when switching to offers tab
+  if (activeTab === 'offers' && userDetails.userId) {
+    fetchOffers(userDetails.userId);
+  }
+}, [activeTab]); // Refresh whenever the active tab changes to 'offers'
+
+  useEffect(() => {
     if (user && user.email) {
       fetchUserProfile();
     }
@@ -465,15 +507,15 @@ const BusinessUserProfile = () => {
         const offersData = await fetchOffersData(userData.userId);
         const subscriptionData = await fetchSubscription(userData.userId);
         await fetchNotifications(userData.userId);
-        
+
         // CRITICAL: Check mandatory plan limits after all data is loaded
         const limitsExceeded = await checkMandatoryPlanLimits(
-          userData.userId, 
-          subscriptionData, 
-          businessesData, 
+          userData.userId,
+          subscriptionData,
+          businessesData,
           offersData
         );
-        
+
         if (limitsExceeded) {
           console.log('🚫 USER BLOCKED DUE TO PLAN LIMIT VIOLATION');
           // User is blocked from accessing profile until they resolve plan limits
@@ -513,61 +555,87 @@ const BusinessUserProfile = () => {
     }
   };
 
-// FIXED: fetchSubscription function that properly handles autoRenew state
-const fetchSubscription = async (userId) => {
-  try {
-    console.log('Fetching subscription for userId:', userId);
+  // FIXED: fetchSubscription function that properly handles autoRenew state
+  const fetchSubscription = async (userId) => {
+    try {
+      console.log('Fetching subscription for userId:', userId);
 
-    const response = await axios.post('http://localhost:5555/api/user/check-subscription-with-renewal', {
-      userId: userId,
-      email: user.email
-    });
-
-    let subscriptionData;
-    if (response.data.success && response.data.subscription) {
-      subscriptionData = {
-        planId: response.data.subscription.planId,
-        planName: response.data.subscription.planName,
-        status: response.data.subscription.status,
-        billingCycle: response.data.subscription.billingCycle,
-        endDate: response.data.subscription.endDate,
-        nextBillingDate: response.data.subscription.nextBillingDate,
-        paymentMethod: response.data.subscription.paymentMethod,
-        
-        // FIXED: Use the actual autoRenew value from the API response
-        autoRenew: response.data.subscription.autoRenew || false,
-        
-        // FIXED: Also get the actual autoRenewal value if it exists at the root level
-        // Some APIs return it at different levels
-        ...(response.data.autoRenewal !== undefined && { autoRenew: response.data.autoRenewal }),
-        
-        downgradeScheduled: response.data.subscription.downgradeScheduled || response.data.downgradeScheduled || false,
-        downgradeEffectiveDate: response.data.subscription.downgradeEffectiveDate || response.data.downgradeDate || null,
-        downgradeReason: response.data.subscription.downgradeReason || null,
-        downgradeScheduledDate: response.data.subscription.downgradeScheduledDate || null,
-        
+      const response = await axios.post('http://localhost:5555/api/user/check-subscription-with-renewal', {
         userId: userId,
-        userEmail: user.email,
-        paymentFailure: response.data.paymentFailure || false,
-        
-        // FIXED: Add these additional fields that might be relevant
-        payhereRecurringToken: response.data.subscription.payhereRecurringToken || null,
-        autoRenewalCancelledDate: response.data.subscription.autoRenewalCancelledDate || null,
-        autoRenewalCancelledReason: response.data.subscription.autoRenewalCancelledReason || null,
-        updatedAt: response.data.subscription.updatedAt || null
-      };
-      
-      console.log('✅ Subscription data loaded:', {
-        planId: subscriptionData.planId,
-        planName: subscriptionData.planName,
-        autoRenew: subscriptionData.autoRenew,
-        downgradeScheduled: subscriptionData.downgradeScheduled,
-        updatedAt: subscriptionData.updatedAt
+        email: user.email
       });
-      
-    } else {
-      // Free subscription defaults
-      subscriptionData = {
+
+      let subscriptionData;
+      if (response.data.success && response.data.subscription) {
+        subscriptionData = {
+          planId: response.data.subscription.planId,
+          planName: response.data.subscription.planName,
+          status: response.data.subscription.status,
+          billingCycle: response.data.subscription.billingCycle,
+          endDate: response.data.subscription.endDate,
+          nextBillingDate: response.data.subscription.nextBillingDate,
+          paymentMethod: response.data.subscription.paymentMethod,
+
+          // FIXED: Use the actual autoRenew value from the API response
+          autoRenew: response.data.subscription.autoRenew || false,
+
+          // FIXED: Also get the actual autoRenewal value if it exists at the root level
+          // Some APIs return it at different levels
+          ...(response.data.autoRenewal !== undefined && { autoRenew: response.data.autoRenewal }),
+
+          downgradeScheduled: response.data.subscription.downgradeScheduled || response.data.downgradeScheduled || false,
+          downgradeEffectiveDate: response.data.subscription.downgradeEffectiveDate || response.data.downgradeDate || null,
+          downgradeReason: response.data.subscription.downgradeReason || null,
+          downgradeScheduledDate: response.data.subscription.downgradeScheduledDate || null,
+
+          userId: userId,
+          userEmail: user.email,
+          paymentFailure: response.data.paymentFailure || false,
+
+          // FIXED: Add these additional fields that might be relevant
+          payhereRecurringToken: response.data.subscription.payhereRecurringToken || null,
+          autoRenewalCancelledDate: response.data.subscription.autoRenewalCancelledDate || null,
+          autoRenewalCancelledReason: response.data.subscription.autoRenewalCancelledReason || null,
+          updatedAt: response.data.subscription.updatedAt || null
+        };
+
+        console.log('✅ Subscription data loaded:', {
+          planId: subscriptionData.planId,
+          planName: subscriptionData.planName,
+          autoRenew: subscriptionData.autoRenew,
+          downgradeScheduled: subscriptionData.downgradeScheduled,
+          updatedAt: subscriptionData.updatedAt
+        });
+
+      } else {
+        // Free subscription defaults
+        subscriptionData = {
+          planId: '1',
+          planName: 'Free',
+          status: 'active',
+          billingCycle: 'monthly',
+          endDate: null,
+          nextBillingDate: null,
+          paymentMethod: 'free',
+          autoRenew: false, // Free plans don't have auto-renewal
+          downgradeScheduled: false,
+          downgradeEffectiveDate: null,
+          userId: userId,
+          userEmail: user.email,
+          paymentFailure: false
+        };
+
+        console.log('ℹ️ No premium subscription found, using free subscription defaults');
+      }
+
+      setSubscription(subscriptionData);
+      return subscriptionData;
+
+    } catch (error) {
+      console.error('❌ Error fetching subscription:', error);
+
+      // Default subscription on error
+      const defaultSubscription = {
         planId: '1',
         planName: 'Free',
         status: 'active',
@@ -575,44 +643,18 @@ const fetchSubscription = async (userId) => {
         endDate: null,
         nextBillingDate: null,
         paymentMethod: 'free',
-        autoRenew: false, // Free plans don't have auto-renewal
+        autoRenew: false,
         downgradeScheduled: false,
         downgradeEffectiveDate: null,
         userId: userId,
         userEmail: user.email,
         paymentFailure: false
       };
-      
-      console.log('ℹ️ No premium subscription found, using free subscription defaults');
+
+      setSubscription(defaultSubscription);
+      return defaultSubscription;
     }
-    
-    setSubscription(subscriptionData);
-    return subscriptionData;
-    
-  } catch (error) {
-    console.error('❌ Error fetching subscription:', error);
-    
-    // Default subscription on error
-    const defaultSubscription = {
-      planId: '1',
-      planName: 'Free',
-      status: 'active',
-      billingCycle: 'monthly',
-      endDate: null,
-      nextBillingDate: null,
-      paymentMethod: 'free',
-      autoRenew: false,
-      downgradeScheduled: false,
-      downgradeEffectiveDate: null,
-      userId: userId,
-      userEmail: user.email,
-      paymentFailure: false
-    };
-    
-    setSubscription(defaultSubscription);
-    return defaultSubscription;
-  }
-};
+  };
 
   const fetchNotifications = async (userId) => {
     try {
@@ -632,16 +674,16 @@ const fetchSubscription = async (userId) => {
       showToastNotification('Already deleting items, please wait...', 'error');
       return;
     }
-    
+
     // Validate selections
     if (!planLimitData) {
       showToastNotification('No plan limit data available', 'error');
       return;
     }
-    
-    const businessesToDelete = planLimitData.exceedsBusinesses ? 
+
+    const businessesToDelete = planLimitData.exceedsBusinesses ?
       planLimitData.currentBusinesses - planLimitData.maxBusinesses : 0;
-    const offersToDelete = planLimitData.exceedsOffers ? 
+    const offersToDelete = planLimitData.exceedsOffers ?
       planLimitData.currentOffers - planLimitData.maxOffers : 0;
 
     // Validate that user has selected exactly the required number of items
@@ -649,31 +691,31 @@ const fetchSubscription = async (userId) => {
       showToastNotification(`You must select exactly ${businessesToDelete} business${businessesToDelete > 1 ? 'es' : ''} to delete`, 'error');
       return;
     }
-    
+
     if (offersToDelete > 0 && selectedOffersToDelete.length !== offersToDelete) {
       showToastNotification(`You must select exactly ${offersToDelete} offer${offersToDelete > 1 ? 's' : ''} to delete`, 'error');
       return;
     }
-    
+
     try {
       updateSubmissionState('deletingItems', true);
-      
+
       const response = await axios.post('http://localhost:5555/api/user/delete-selected-items', {
         userId: userDetails.userId,
         businessIds: selectedBusinessesToDelete,
         offerIds: selectedOffersToDelete
       });
-      
+
       if (response.data.success) {
         // Refresh data
         const newBusinessesData = await fetchBusinessesData(userDetails.userId);
         const newOffersData = await fetchOffersData(userDetails.userId);
-        
+
         // Check if limits are now within bounds
         const limits = subscriptionUtils.getSubscriptionLimits(subscription);
         const stillExceedsBusinesses = newBusinessesData.length > limits.maxBusinesses;
         const stillExceedsOffers = newOffersData.length > limits.maxOffers;
-        
+
         if (!stillExceedsBusinesses && !stillExceedsOffers) {
           // Limits are now OK - clear enforcement
           setMandatoryPlanEnforcement(false);
@@ -683,7 +725,7 @@ const fetchSubscription = async (userId) => {
           setPlanLimitData(null);
           setSelectedBusinessesToDelete([]);
           setSelectedOffersToDelete([]);
-          
+
           showToastNotification('Items deleted successfully! You can now access your profile.', 'success');
           console.log('✅ Plan limits resolved, user unblocked');
         } else {
@@ -696,11 +738,11 @@ const fetchSubscription = async (userId) => {
             exceedsOffers: stillExceedsOffers,
             exceedsLimits: stillExceedsBusinesses || stillExceedsOffers
           };
-          
+
           setPlanLimitData(updatedPlanData);
           setSelectedBusinessesToDelete([]);
           setSelectedOffersToDelete([]);
-          
+
           showToastNotification('Items deleted, but you still exceed plan limits. Please delete more items.', 'warning');
           console.log('⚠️ User still exceeds limits after deletion');
         }
@@ -722,7 +764,7 @@ const fetchSubscription = async (userId) => {
     setPlanEnforcementBlocked(false);
     setShowPlanLimitModal(false);
     setShowComprehensivePlanModal(false);
-    
+
     navigate('/SubscriptionPage?reason=plan_limit_exceeded');
   };
 
@@ -765,7 +807,7 @@ const fetchSubscription = async (userId) => {
   const handleBusinessSubmit = async () => {
     // Prevent multiple submissions with detailed checks
     const isSubmitting = editingBusiness ? submissionStates.updatingBusiness : submissionStates.creatingBusiness;
-    
+
     if (isSubmitting) {
       showToastNotification(editingBusiness ? 'Already updating business...' : 'Already creating business...', 'error');
       return;
@@ -802,14 +844,14 @@ const fetchSubscription = async (userId) => {
           'http://localhost:5555/api/businesses',
           { ...businessForm, userId: userDetails.userId }
         );
-        
+
         if (response.data.success) {
           await fetchBusinesses(userDetails.userId);
           showToastNotification('Business created successfully!', 'success');
         }
       }
-      
-              // Close modal and reset form
+
+      // Close modal and reset form
       setShowBusinessModal(false);
       setEditingBusiness(null);
       setBusinessForm({
@@ -817,7 +859,7 @@ const fetchSubscription = async (userId) => {
         socialMediaLinks: '', operatingHours: '', businessType: '',
         registrationNumber: '', taxId: ''
       });
-      
+
     } catch (error) {
       console.error('Error saving business:', error);
       showToastNotification(error.response?.data?.message || 'Failed to save business', 'error');
@@ -828,106 +870,142 @@ const fetchSubscription = async (userId) => {
   };
 
   // ENHANCED: Offer submit with comprehensive protection
-  const handleOfferSubmit = async () => {
-    // Prevent multiple submissions with detailed checks
-    const isSubmitting = editingOffer ? submissionStates.updatingOffer : submissionStates.creatingOffer;
-    
-    if (isSubmitting) {
-      showToastNotification(editingOffer ? 'Already updating offer...' : 'Already creating offer...', 'error');
+const handleOfferSubmit = async () => {
+  // Prevent multiple submissions with detailed checks
+  const isSubmitting = editingOffer ? submissionStates.updatingOffer : submissionStates.creatingOffer;
+
+  if (isSubmitting) {
+    showToastNotification(editingOffer ? 'Already updating offer...' : 'Already creating offer...', 'error');
+    return;
+  }
+
+  // Validate required fields
+  if (!offerForm.businessId) {
+    showToastNotification('Please select a business!', 'error');
+    return;
+  }
+  if (!offerForm.title.trim()) {
+    showToastNotification('Offer title is required!', 'error');
+    return;
+  }
+  if (!offerForm.discount.trim()) {
+    showToastNotification('Discount amount is required!', 'error');
+    return;
+  }
+
+  // Validate dates
+  if (offerForm.startDate && offerForm.endDate) {
+    const startDate = new Date(offerForm.startDate);
+    const endDate = new Date(offerForm.endDate);
+
+    if (startDate >= endDate) {
+      showToastNotification('End date must be after start date!', 'error');
       return;
+    }
+  }
+
+  try {
+    const stateKey = editingOffer ? 'updatingOffer' : 'creatingOffer';
+    updateSubmissionState(stateKey, true);
+
+    // Create FormData for file upload
+    const formData = new FormData();
+    formData.append('userId', userDetails.userId);
+    formData.append('businessId', offerForm.businessId);
+    formData.append('title', offerForm.title);
+    formData.append('discount', offerForm.discount);
+    formData.append('category', offerForm.category || '');
+    formData.append('startDate', offerForm.startDate || '');
+    formData.append('endDate', offerForm.endDate || '');
+    formData.append('isActive', offerForm.isActive);
+
+    // Append image if selected
+    if (offerForm.image) {
+      formData.append('image', offerForm.image);
     }
 
-    // Validate required fields
-    if (!offerForm.businessId) {
-      showToastNotification('Please select a business!', 'error');
-      return;
-    }
-    if (!offerForm.title.trim()) {
-      showToastNotification('Offer title is required!', 'error');
-      return;
-    }
-    if (!offerForm.discount.trim()) {
-      showToastNotification('Discount amount is required!', 'error');
-      return;
-    }
+    if (editingOffer) {
+      formData.append('requiresReapproval', true);
 
-    // Validate dates
-    if (offerForm.startDate && offerForm.endDate) {
-      const startDate = new Date(offerForm.startDate);
-      const endDate = new Date(offerForm.endDate);
+      const response = await axios.put(
+        `http://localhost:5555/api/offers/${editingOffer._id}`,
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        }
+      );
 
-      if (startDate >= endDate) {
-        showToastNotification('End date must be after start date!', 'error');
+      if (response.data.success) {
+        // ✅ CRITICAL FIX: Refresh offers immediately after update
+        await fetchOffers(userDetails.userId);
+        
+        showToastNotification(
+          response.data.statusReset 
+            ? 'Offer updated and resubmitted for admin approval!' 
+            : 'Offer updated successfully!',
+          'success'
+        );
+
+        // Send notification if offer is already approved
+        if (response.data.offer && !response.data.statusReset) {
+          await sendOfferNotification(response.data.offer);
+        }
+      }
+    } else {
+      // Check limits before creating
+      if (!subscriptionUtils.canAddOffer(offers.length, subscription)) {
+        const limitMessage = subscriptionUtils.getLimitMessage('offer', offers.length, subscription);
+        showToastNotification(limitMessage + ' Please upgrade to Premium to add more offers.', 'error');
+        updateSubmissionState(stateKey, false);
         return;
       }
-    }
 
-    try {
-      const stateKey = editingOffer ? 'updatingOffer' : 'creatingOffer';
-      updateSubmissionState(stateKey, true);
-
-      if (editingOffer) {
-        // UPDATING EXISTING OFFER
-        const response = await axios.put(
-          `http://localhost:5555/api/offers/${editingOffer._id}`,
-          {
-            ...offerForm,
-            userId: userDetails.userId,
-            requiresReapproval: true
-          }
-        );
-
-        if (response.data.success) {
-          await fetchOffers(userDetails.userId);
-
-          if (response.data.statusReset) {
-            showToastNotification('Offer updated successfully! It will need admin re-approval before going live again.', 'info');
-          } else if (editingOffer.adminStatus === 'declined') {
-            showToastNotification('Offer updated successfully! It has been resubmitted for admin review.', 'info');
-          } else {
-            showToastNotification('Offer updated successfully!', 'success');
+      const response = await axios.post(
+        'http://localhost:5555/api/offers',
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data'
           }
         }
-      } else {
-        // CREATING NEW OFFER
-        if (!subscriptionUtils.canAddOffer(offers.length, subscription)) {
-          const limitMessage = subscriptionUtils.getLimitMessage('offer', offers.length, subscription);
-          showToastNotification(limitMessage + ' Please upgrade to Premium to add more offers.', 'error');
-          return;
-        }
+      );
 
-        const response = await axios.post(
-          'http://localhost:5555/api/offers',
-          { ...offerForm, userId: userDetails.userId }
-        );
+      if (response.data.success) {
+        // ✅ CRITICAL FIX: Refresh offers immediately after creation
+        await fetchOffers(userDetails.userId);
+        
+        showToastNotification('Offer created successfully and submitted for admin approval!', 'success');
 
-        if (response.data.success) {
-          if (response.data.pendingApproval) {
-            showToastNotification('Offer submitted successfully! It will be visible once approved by admin.', 'info');
-          } else {
-            await sendOfferNotification(offerForm);
-            showToastNotification('Offer created successfully! Email notification sent.', 'success');
-          }
-          await fetchOffers(userDetails.userId);
-        }
+        // Log the new offer for debugging
+        console.log('✅ New offer created:', response.data.offer);
       }
-
-      // Close modal and reset form
-      setShowOfferModal(false);
-      setEditingOffer(null);
-      setOfferForm({
-        businessId: '', title: '', discount: '', startDate: '',
-        endDate: '', category: '', isActive: true
-      });
-      
-    } catch (error) {
-      console.error('Error saving offer:', error);
-      showToastNotification(error.response?.data?.message || 'Failed to save offer', 'error');
-    } finally {
-      const stateKey = editingOffer ? 'updatingOffer' : 'creatingOffer';
-      updateSubmissionState(stateKey, false);
     }
-  };
+
+    // ✅ Close modal and reset form AFTER successful refresh
+    setShowOfferModal(false);
+    setEditingOffer(null);
+    setOfferForm({
+      businessId: '',
+      title: '',
+      discount: '',
+      startDate: '',
+      endDate: '',
+      category: '',
+      isActive: true,
+      image: null,
+      imagePreview: null
+    });
+
+  } catch (error) {
+    console.error('Error saving offer:', error);
+    showToastNotification(error.response?.data?.message || 'Failed to save offer', 'error');
+  } finally {
+    const stateKey = editingOffer ? 'updatingOffer' : 'creatingOffer';
+    updateSubmissionState(stateKey, false);
+  }
+};
 
   const sendOfferNotification = async (offerData) => {
     try {
@@ -964,7 +1042,7 @@ const fetchSubscription = async (userId) => {
 
     try {
       updateSubmissionState('deletingBusiness', true);
-      
+
       const response = await axios.delete(`http://localhost:5555/api/businesses/${businessId}`);
       if (response.data.success) {
         await fetchBusinesses(userDetails.userId);
@@ -980,47 +1058,49 @@ const fetchSubscription = async (userId) => {
   };
 
   // ENHANCED: Delete offer with protection
-  const handleDeleteOffer = async (offerId) => {
-    if (submissionStates.deletingOffer) {
-      showToastNotification('Already deleting offer, please wait...', 'error');
-      return;
-    }
+const handleDeleteOffer = async (offerId) => {
+  if (submissionStates.deletingOffer) {
+    showToastNotification('Already deleting offer, please wait...', 'error');
+    return;
+  }
 
-    if (!window.confirm('Are you sure you want to delete this offer?')) {
-      return;
-    }
+  if (!window.confirm('Are you sure you want to delete this offer?')) {
+    return;
+  }
 
-    try {
-      updateSubmissionState('deletingOffer', true);
-      
-      const response = await axios.delete(`http://localhost:5555/api/offers/${offerId}`);
-      if (response.data.success) {
-        await fetchOffers(userDetails.userId);
-        showToastNotification('Offer deleted successfully!', 'success');
-      }
-    } catch (error) {
-      console.error('Error deleting offer:', error);
-      showToastNotification('Failed to delete offer', 'error');
-    } finally {
-      updateSubmissionState('deletingOffer', false);
-    }
-  };
+  try {
+    updateSubmissionState('deletingOffer', true);
 
-  const toggleOfferStatus = async (offerId, currentStatus) => {
-    try {
-      const response = await axios.patch(
-        `http://localhost:5555/api/offers/${offerId}/toggle-status`,
-        { isActive: !currentStatus }
-      );
-      if (response.data.success) {
-        await fetchOffers(userDetails.userId);
-        showToastNotification('Offer status updated successfully!', 'success');
-      }
-    } catch (error) {
-      console.error('Error toggling offer status:', error);
-      showToastNotification('Failed to update offer status', 'error');
+    const response = await axios.delete(`http://localhost:5555/api/offers/${offerId}`);
+    if (response.data.success) {
+      // ✅ CRITICAL FIX: Refresh offers immediately after deletion
+      await fetchOffers(userDetails.userId);
+      showToastNotification('Offer deleted successfully!', 'success');
     }
-  };
+  } catch (error) {
+    console.error('Error deleting offer:', error);
+    showToastNotification('Failed to delete offer', 'error');
+  } finally {
+    updateSubmissionState('deletingOffer', false);
+  }
+};
+
+ const toggleOfferStatus = async (offerId, currentStatus) => {
+  try {
+    const response = await axios.patch(
+      `http://localhost:5555/api/offers/${offerId}/toggle-status`,
+      { isActive: !currentStatus }
+    );
+    if (response.data.success) {
+      // ✅ CRITICAL FIX: Refresh offers immediately after toggle
+      await fetchOffers(userDetails.userId);
+      showToastNotification('Offer status updated successfully!', 'success');
+    }
+  } catch (error) {
+    console.error('Error toggling offer status:', error);
+    showToastNotification('Failed to update offer status', 'error');
+  }
+};
 
   const handleSubscriptionNavigation = () => {
     if (subscription.paymentFailure) {
@@ -1094,17 +1174,17 @@ const fetchSubscription = async (userId) => {
   const MandatoryPlanEnforcementModal = () => {
     if (!mandatoryPlanEnforcement || !planLimitData) return null;
 
-    const businessesToDelete = planLimitData.exceedsBusinesses ? 
+    const businessesToDelete = planLimitData.exceedsBusinesses ?
       planLimitData.currentBusinesses - planLimitData.maxBusinesses : 0;
-    const offersToDelete = planLimitData.exceedsOffers ? 
+    const offersToDelete = planLimitData.exceedsOffers ?
       planLimitData.currentOffers - planLimitData.maxOffers : 0;
 
     const isValidSelection = () => {
-      const businessSelectionValid = !planLimitData.exceedsBusinesses || 
+      const businessSelectionValid = !planLimitData.exceedsBusinesses ||
         selectedBusinessesToDelete.length === businessesToDelete;
-      const offerSelectionValid = !planLimitData.exceedsOffers || 
+      const offerSelectionValid = !planLimitData.exceedsOffers ||
         selectedOffersToDelete.length === offersToDelete;
-      
+
       return businessSelectionValid && offerSelectionValid;
     };
 
@@ -1115,7 +1195,7 @@ const fetchSubscription = async (userId) => {
         zIndex: 9999 // Higher z-index to ensure it's always on top
       }}>
         <div style={{
-          ...styles.modalContent, 
+          ...styles.modalContent,
           maxWidth: '900px',
           border: '3px solid #dc3545' // Red border to indicate critical action required
         }}>
@@ -1126,9 +1206,9 @@ const fetchSubscription = async (userId) => {
             marginBottom: '24px'
           }}>
             <div style={{ fontSize: '64px', marginBottom: '16px' }}>⚠️</div>
-            <h3 style={{ 
-              fontSize: '32px', 
-              color: '#dc3545', 
+            <h3 style={{
+              fontSize: '32px',
+              color: '#dc3545',
               margin: '0 0 12px 0',
               fontWeight: 'bold'
             }}>
@@ -1143,7 +1223,7 @@ const fetchSubscription = async (userId) => {
               Your account exceeds Free plan limits. You must resolve this before accessing your profile.
             </p>
           </div>
-          
+
           <div style={styles.planSummary}>
             <div style={styles.planStats}>
               <div style={styles.statItem}>
@@ -1211,12 +1291,12 @@ const fetchSubscription = async (userId) => {
 
             {businesses.length > 0 && planLimitData.exceedsBusinesses && (
               <div style={styles.itemsSection}>
-                <h5 style={{ 
-                  color: '#dc3545', 
-                  marginBottom: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '8px' 
+                <h5 style={{
+                  color: '#dc3545',
+                  marginBottom: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
                 }}>
                   🏢 Select {businessesToDelete} Business{businessesToDelete > 1 ? 'es' : ''} to Delete:
                   <span style={{
@@ -1260,12 +1340,12 @@ const fetchSubscription = async (userId) => {
 
             {offers.length > 0 && planLimitData.exceedsOffers && (
               <div style={styles.itemsSection}>
-                <h5 style={{ 
-                  color: '#dc3545', 
-                  marginBottom: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '8px' 
+                <h5 style={{
+                  color: '#dc3545',
+                  marginBottom: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
                 }}>
                   🎯 Select {offersToDelete} Offer{offersToDelete > 1 ? 's' : ''} to Delete:
                   <span style={{
@@ -1282,7 +1362,7 @@ const fetchSubscription = async (userId) => {
                   {offers.map((offer) => {
                     const statusInfo = getOfferStatusDisplay(offer);
                     let businessName = 'Business not found';
-                    
+
                     if (offer.businessId && typeof offer.businessId === 'object' && offer.businessId.name) {
                       businessName = offer.businessId.name;
                     } else {
@@ -1313,7 +1393,7 @@ const fetchSubscription = async (userId) => {
                         <div style={styles.itemInfo}>
                           <strong>{offer.title}</strong>
                           <span style={styles.itemDetails}>
-                            {businessName} • {offer.discount} • 
+                            {businessName} • {offer.discount} •
                             <span style={{
                               color: statusInfo.color,
                               fontWeight: '600',
@@ -1356,7 +1436,7 @@ const fetchSubscription = async (userId) => {
             >
               Upgrade to Premium
             </button>
-            
+
             <button
               style={{
                 padding: '14px 28px',
@@ -1402,18 +1482,18 @@ const fetchSubscription = async (userId) => {
   const ComprehensivePlanModal = () => {
     if (!showComprehensivePlanModal || !planLimitData) return null;
 
-    const businessesToDelete = planLimitData.exceedsBusinesses ? 
+    const businessesToDelete = planLimitData.exceedsBusinesses ?
       planLimitData.currentBusinesses - planLimitData.maxBusinesses : 0;
-    const offersToDelete = planLimitData.exceedsOffers ? 
+    const offersToDelete = planLimitData.exceedsOffers ?
       planLimitData.currentOffers - planLimitData.maxOffers : 0;
 
     return (
       <div style={styles.modal}>
-        <div style={{...styles.modalContent, maxWidth: '800px'}}>
+        <div style={{ ...styles.modalContent, maxWidth: '800px' }}>
           <h3 style={{ fontSize: '32px', textAlign: 'center', color: '#0063B4', marginBottom: '24px' }}>
             Manage Your {planLimitData.planName} Plan
           </h3>
-          
+
           <div style={styles.planSummary}>
             <div style={styles.planStats}>
               <div style={styles.statItem}>
@@ -1435,7 +1515,7 @@ const fetchSubscription = async (userId) => {
                   You have exceeded your {planLimitData.planName} plan limits!
                 </p>
                 <p style={{ margin: '0', fontSize: '16px', color: '#721c24' }}>
-                  {isPremiumUser() ? 
+                  {isPremiumUser() ?
                     'Please delete some items to stay within your Premium plan limits.' :
                     'Please upgrade to Premium or delete some items to continue.'
                   }
@@ -1497,7 +1577,7 @@ const fetchSubscription = async (userId) => {
                   {offers.map((offer) => {
                     const statusInfo = getOfferStatusDisplay(offer);
                     let businessName = 'Business not found';
-                    
+
                     if (offer.businessId && typeof offer.businessId === 'object' && offer.businessId.name) {
                       businessName = offer.businessId.name;
                     } else {
@@ -1527,7 +1607,7 @@ const fetchSubscription = async (userId) => {
                         <div style={styles.itemInfo}>
                           <strong>{offer.title}</strong>
                           <span style={styles.itemDetails}>
-                            {businessName} • {offer.discount} • 
+                            {businessName} • {offer.discount} •
                             <span style={{
                               color: statusInfo.color,
                               fontWeight: '600',
@@ -1555,7 +1635,7 @@ const fetchSubscription = async (userId) => {
                 Upgrade to Premium
               </button>
             )}
-            
+
             {(selectedBusinessesToDelete.length > 0 || selectedOffersToDelete.length > 0) && (
               <button
                 style={{
@@ -1568,7 +1648,7 @@ const fetchSubscription = async (userId) => {
                 {submissionStates.deletingItems ? 'Deleting...' : `Delete Selected (${selectedBusinessesToDelete.length + selectedOffersToDelete.length})`}
               </button>
             )}
-            
+
             <button
               style={styles.cancelButton}
               onClick={() => {
@@ -1671,10 +1751,10 @@ const fetchSubscription = async (userId) => {
     <div style={styles.container}>
       {/* Always render the mandatory enforcement modal if needed */}
       <MandatoryPlanEnforcementModal />
-      
+
       {/* Plan Limit Modal */}
       <ComprehensivePlanModal />
-      
+
       {/* Header Section */}
       <div style={styles.header}>
         <div style={styles.profileSection}>
@@ -1806,7 +1886,7 @@ const fetchSubscription = async (userId) => {
                     showToastNotification('Already creating business, please wait...', 'error');
                     return;
                   }
-                  
+
                   if (!subscriptionUtils.canAddBusiness(businesses.length, subscription)) {
                     const limitMessage = subscriptionUtils.getLimitMessage('business', businesses.length, subscription);
                     showToastNotification(limitMessage + ' Please upgrade to Premium to add more businesses.', 'error');
@@ -1832,8 +1912,8 @@ const fetchSubscription = async (userId) => {
                 }}
                 disabled={!subscriptionUtils.canAddBusiness(businesses.length, subscription) || submissionStates.creatingBusiness}
               >
-                {submissionStates.creatingBusiness ? 'Creating...' : 
-                 subscriptionUtils.canAddBusiness(businesses.length, subscription) ? 'Add New Business' : 'Limit Reached'}
+                {submissionStates.creatingBusiness ? 'Creating...' :
+                  subscriptionUtils.canAddBusiness(businesses.length, subscription) ? 'Add New Business' : 'Limit Reached'}
               </button>
             </div>
 
@@ -1938,7 +2018,7 @@ const fetchSubscription = async (userId) => {
                     showToastNotification('Already creating offer, please wait...', 'error');
                     return;
                   }
-                  
+
                   if (businesses.length === 0) {
                     showToastNotification('Please create a business first before adding offers!', 'error');
                     return;
@@ -1964,8 +2044,8 @@ const fetchSubscription = async (userId) => {
                 }}
                 disabled={!subscriptionUtils.canAddOffer(offers.length, subscription) || submissionStates.creatingOffer}
               >
-                {submissionStates.creatingOffer ? 'Creating...' : 
-                 subscriptionUtils.canAddOffer(offers.length, subscription) ? 'Create New Offer' : 'Limit Reached'}
+                {submissionStates.creatingOffer ? 'Creating...' :
+                  subscriptionUtils.canAddOffer(offers.length, subscription) ? 'Create New Offer' : 'Limit Reached'}
               </button>
             </div>
 
@@ -1990,6 +2070,26 @@ const fetchSubscription = async (userId) => {
 
                   return (
                     <div key={offer._id} style={styles.offerCard}>
+
+                      {offer.imageUrl && (
+                        <div style={{
+                          width: '100%',
+                          height: '200px',
+                          marginBottom: '16px',
+                          borderRadius: '8px',
+                          overflow: 'hidden'
+                        }}>
+                          <img
+                            src={offer.imageUrl}
+                            alt={offer.title}
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover'
+                            }}
+                          />
+                        </div>
+                      )}
                       <div style={styles.offerHeader}>
                         <h4>{offer.title}</h4>
                         <div style={{
@@ -2269,16 +2369,16 @@ const fetchSubscription = async (userId) => {
               ))}
             </div>
             <div style={styles.modalActions}>
-              <button 
+              <button
                 style={{
                   ...styles.saveButton,
                   opacity: (editingBusiness ? submissionStates.updatingBusiness : submissionStates.creatingBusiness) ? 0.6 : 1
-                }} 
+                }}
                 onClick={handleBusinessSubmit}
                 disabled={editingBusiness ? submissionStates.updatingBusiness : submissionStates.creatingBusiness}
               >
-                {editingBusiness ? 
-                  (submissionStates.updatingBusiness ? 'Updating...' : 'Update') : 
+                {editingBusiness ?
+                  (submissionStates.updatingBusiness ? 'Updating...' : 'Update') :
                   (submissionStates.creatingBusiness ? 'Creating...' : 'Create')
                 }
               </button>
@@ -2388,6 +2488,55 @@ const fetchSubscription = async (userId) => {
               </div>
 
               <div style={styles.formGroup}>
+                <label>Offer Image (Optional)</label>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/jpg,image/png,image/webp"
+                  onChange={handleOfferImageChange}
+                  style={styles.input}
+                />
+                <p style={{ fontSize: '0.75rem', color: '#6c757d', margin: '4px 0 0 0' }}>
+                  Max 5MB. Will be automatically compressed to ~100KB. Formats: JPEG, PNG, WebP
+                </p>
+
+                {/* Image Preview */}
+                {offerForm.imagePreview && (
+                  <div style={{ marginTop: '12px' }}>
+                    <img
+                      src={offerForm.imagePreview}
+                      alt="Preview"
+                      style={{
+                        maxWidth: '100%',
+                        maxHeight: '200px',
+                        borderRadius: '8px',
+                        border: '2px solid #e9ecef'
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setOfferForm({
+                        ...offerForm,
+                        image: null,
+                        imagePreview: null
+                      })}
+                      style={{
+                        marginTop: '8px',
+                        padding: '6px 12px',
+                        backgroundColor: '#dc3545',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.8rem'
+                      }}
+                    >
+                      Remove Image
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div style={styles.formGroup}>
                 <label>
                   <input
                     type="checkbox"
@@ -2400,16 +2549,16 @@ const fetchSubscription = async (userId) => {
               </div>
             </div>
             <div style={styles.modalActions}>
-              <button 
+              <button
                 style={{
                   ...styles.saveButton,
                   opacity: (editingOffer ? submissionStates.updatingOffer : submissionStates.creatingOffer) ? 0.6 : 1
-                }} 
+                }}
                 onClick={handleOfferSubmit}
                 disabled={editingOffer ? submissionStates.updatingOffer : submissionStates.creatingOffer}
               >
-                {editingOffer ? 
-                  (submissionStates.updatingOffer ? 'Updating...' : 'Update') : 
+                {editingOffer ?
+                  (submissionStates.updatingOffer ? 'Updating...' : 'Update') :
                   (submissionStates.creatingOffer ? 'Creating...' : 'Create')
                 }
               </button>

@@ -3,7 +3,7 @@ import User from '../models/user.js';
 import Subscription from '../models/subscription.js';
 import SubscriptionHistory from '../models/subscription_history.js';
 import SubscriptionLog from '../models/subscription_log.js';
-import {checkUserPlanLimits } from '../controllers/user_controller.js'
+import {checkUserPlanLimits, getUserName } from '../controllers/user_controller.js'
 import Offer from '../models/offer.js';
 
 const router = express.Router();

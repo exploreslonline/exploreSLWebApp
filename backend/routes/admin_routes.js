@@ -8,7 +8,8 @@ import Subscription from '../models/subscription.js';
 import Business from '../models/business.js';
 import SubscriptionHistory from '../models/subscription_history.js';
 import SubscriptionLog from '../models/subscription_log.js';
-import { sendOfferApprovalNotification } from '../controllers/user_controller.js';
+import { sendOfferApprovalNotification,getUserName } from '../controllers/user_controller.js';
+import { uploadConfig, processOfferImage } from '../Utills/imageUtils.js';
 
 const router = express.Router();
 
@@ -45,6 +46,12 @@ function isRecent(date, hoursThreshold = 24) {
   const diffInHours = (now - new Date(date)) / (1000 * 60 * 60);
   return diffInHours <= hoursThreshold;
 }
+
+function bufferToDataURL(buffer, contentType) {
+  if (!buffer || !contentType) return null;
+  const base64 = buffer.toString('base64');
+  return `data:${contentType};base64,${base64}`;
+}
 router.get('/free-subscription-users', async (req, res) => {
   try {
     console.log('📋 Fetching free subscription users...');
@@ -53,23 +60,19 @@ router.get('/free-subscription-users', async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
-    // Query for free plan users with subscription details
     const freeSubscriptionsQuery = {
       planId: '1',
-      status: { $in: ['active', 'inactive'] } // Include both active and inactive free users
+      status: { $in: ['active', 'inactive'] }
     };
 
-    // Get free subscriptions with user details
     const freeSubscriptions = await Subscription.find(freeSubscriptionsQuery)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .lean();
 
-    // Get total count for pagination
     const totalFreeSubscriptions = await Subscription.countDocuments(freeSubscriptionsQuery);
 
-    // Enrich subscription data with user details and usage statistics
     const enrichedSubscriptions = await Promise.all(
       freeSubscriptions.map(async (subscription) => {
         let userDetails = null;
@@ -78,7 +81,6 @@ router.get('/free-subscription-users', async (req, res) => {
         let businessesData = [];
         let offersData = [];
 
-        // Get user details if userId exists
         if (subscription.userId) {
           userDetails = await User.findOne({
             userId: parseInt(subscription.userId)
@@ -92,7 +94,6 @@ router.get('/free-subscription-users', async (req, res) => {
             lastLoginDate: 1
           }).lean();
 
-          // Get business and offer counts
           businessCount = await Business.countDocuments({
             userId: parseInt(subscription.userId),
             status: { $ne: 'deleted' }
@@ -103,7 +104,6 @@ router.get('/free-subscription-users', async (req, res) => {
             status: { $ne: 'deleted' }
           });
 
-          // Get detailed business data
           businessesData = await Business.find({
             userId: parseInt(subscription.userId),
             status: { $ne: 'deleted' }
@@ -114,7 +114,6 @@ router.get('/free-subscription-users', async (req, res) => {
             category: 1
           }).sort({ createdAt: -1 }).lean();
 
-          // Get detailed offers data
           offersData = await Offer.find({
             userId: parseInt(subscription.userId),
             status: { $ne: 'deleted' }
@@ -149,7 +148,6 @@ router.get('/free-subscription-users', async (req, res) => {
       })
     );
 
-    // Calculate statistics
     const stats = {
       totalFreeUsers: totalFreeSubscriptions,
       activeFreeUsers: enrichedSubscriptions.filter(sub => sub.status === 'active').length,
@@ -165,7 +163,6 @@ router.get('/free-subscription-users', async (req, res) => {
         : 0
     };
 
-    // Pagination info
     const pagination = {
       currentPage: page,
       totalPages: Math.ceil(totalFreeSubscriptions / limit),
@@ -194,19 +191,18 @@ router.get('/free-subscription-users', async (req, res) => {
   }
 });
 
+
 // Additional endpoint for user activity summary
 router.get('/free-users-summary', async (req, res) => {
   try {
     console.log('📊 Fetching free users summary...');
 
-    // Get overall free user statistics
     const totalFreeUsers = await Subscription.countDocuments({ planId: '1' });
     const activeFreeUsers = await Subscription.countDocuments({
       planId: '1',
       status: 'active'
     });
 
-    // Get users who exceed limits
     const freeSubscriptions = await Subscription.find({ planId: '1' }).lean();
 
     let usersExceedingLimits = 0;
@@ -234,14 +230,12 @@ router.get('/free-users-summary', async (req, res) => {
       }
     }
 
-    // Recent signups (last 7 days)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const recentSignups = await Subscription.countDocuments({
       planId: '1',
       createdAt: { $gte: sevenDaysAgo }
     });
 
-    // Active users (users who have created businesses or offers)
     const activeUsers = await Subscription.countDocuments({
       planId: '1',
       userId: { $exists: true, $ne: null }
@@ -258,7 +252,7 @@ router.get('/free-users-summary', async (req, res) => {
       totalOffersCreated: totalOffers,
       averageBusinessesPerUser: activeUsers > 0 ? (totalBusinesses / activeUsers).toFixed(1) : 0,
       averageOffersPerUser: activeUsers > 0 ? (totalOffers / activeUsers).toFixed(1) : 0,
-      conversionOpportunity: usersExceedingLimits // Users who might upgrade
+      conversionOpportunity: usersExceedingLimits
     };
 
     res.json({
@@ -283,122 +277,6 @@ router.use('offers', (req, res, next) => {
 });
 
 
-// Add notification reset when fetching offers
-router.get('/offers', async (req, res, next) => {
-  try {
-    // Your existing offers fetching logic here...
-    const { status, page = 1, limit = 20 } = req.query;
-
-    let filter = {};
-    if (status && ['pending', 'approved', 'declined'].includes(status)) {
-      filter.adminStatus = status;
-    }
-
-    console.log(`📋 Fetching admin offers with filter:`, filter);
-
-    // Get offers with business details
-    const offers = await Offer.find(filter)
-      .populate('businessId', 'name category address phone email website')
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const totalOffers = await Offer.countDocuments(filter);
-
-    // FIXED: Manually fetch user details using userId Number field
-    const offersWithUserDetails = await Promise.all(offers.map(async (offer) => {
-      try {
-        // Find user by userId (Number field, not ObjectId)
-        const user = await User.findOne({ userId: offer.userId }).select('firstName lastName email businessName userType');
-
-        // Add computed status based on dates and admin approval
-        const now = new Date();
-        const startDate = offer.startDate ? new Date(offer.startDate) : null;
-        const endDate = offer.endDate ? new Date(offer.endDate) : null;
-
-        let computedStatus = offer.adminStatus;
-
-        if (offer.adminStatus === 'approved') {
-          if (startDate && startDate > now) {
-            computedStatus = 'approved-scheduled';
-          } else if (endDate && endDate < now) {
-            computedStatus = 'approved-expired';
-          } else if (!offer.isActive) {
-            computedStatus = 'approved-inactive';
-          } else {
-            computedStatus = 'approved-active';
-          }
-        }
-
-        return {
-          ...offer.toObject(),
-          userDetails: user ? {
-            userId: user.userId,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            email: user.email,
-            businessName: user.businessName,
-            userType: user.userType
-          } : {
-            userId: offer.userId,
-            firstName: 'Unknown',
-            lastName: 'User',
-            email: 'N/A',
-            businessName: 'N/A',
-            userType: 'N/A'
-          },
-          computedStatus
-        };
-      } catch (error) {
-        console.error(`Error fetching user details for userId ${offer.userId}:`, error);
-        return {
-          ...offer.toObject(),
-          userDetails: {
-            userId: offer.userId,
-            firstName: 'Error',
-            lastName: 'Loading',
-            email: 'N/A',
-            businessName: 'N/A',
-            userType: 'N/A'
-          },
-          computedStatus: offer.adminStatus
-        };
-      }
-    }));
-
-    console.log(`✅ Fetched ${offersWithUserDetails.length} offers for admin`);
-
-    res.json({
-      success: true,
-      offers: offersWithUserDetails,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(totalOffers / limit),
-        totalOffers,
-        limit: parseInt(limit)
-      },
-      counts: {
-        pending: await Offer.countDocuments({ adminStatus: 'pending' }),
-        approved: await Offer.countDocuments({ adminStatus: 'approved' }),
-        declined: await Offer.countDocuments({ adminStatus: 'declined' })
-      },
-      // Add notification info
-      notificationInfo: {
-        adminViewed: true,
-        viewedAt: new Date().toISOString(),
-        shouldResetCount: true
-      }
-    });
-  } catch (error) {
-    console.error('❌ Error fetching admin offers:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch offers for admin review',
-      error: error.message
-    });
-  }
-});
-
 
 router.get('/offers', async (req, res) => {
   try {
@@ -411,7 +289,6 @@ router.get('/offers', async (req, res) => {
 
     console.log(`📋 Fetching admin offers with filter:`, filter);
 
-    // Get offers with business details
     const offers = await Offer.find(filter)
       .populate('businessId', 'name category address phone email website')
       .sort({ createdAt: -1 })
@@ -420,13 +297,10 @@ router.get('/offers', async (req, res) => {
 
     const totalOffers = await Offer.countDocuments(filter);
 
-    // FIXED: Manually fetch user details using userId Number field
     const offersWithUserDetails = await Promise.all(offers.map(async (offer) => {
       try {
-        // Find user by userId (Number field, not ObjectId)
         const user = await User.findOne({ userId: offer.userId }).select('firstName lastName email businessName userType');
 
-        // Add computed status based on dates and admin approval
         const now = new Date();
         const startDate = offer.startDate ? new Date(offer.startDate) : null;
         const endDate = offer.endDate ? new Date(offer.endDate) : null;
@@ -442,6 +316,17 @@ router.get('/offers', async (req, res) => {
             computedStatus = 'approved-inactive';
           } else {
             computedStatus = 'approved-active';
+          }
+        }
+
+        // CRITICAL: Convert image buffer to base64 for frontend display
+        let imageUrl = null;
+        if (offer.image && offer.image.data) {
+          try {
+            imageUrl = bufferToDataURL(offer.image.data, offer.image.contentType);
+            console.log(`✅ Image converted for offer ${offer._id}: ${(offer.image.size / 1024).toFixed(2)} KB`);
+          } catch (imageError) {
+            console.error(`❌ Failed to convert image for offer ${offer._id}:`, imageError);
           }
         }
 
@@ -462,7 +347,15 @@ router.get('/offers', async (req, res) => {
             businessName: 'N/A',
             userType: 'N/A'
           },
-          computedStatus
+          computedStatus,
+          imageUrl, // IMPORTANT: Include the base64 image URL
+          // Remove raw buffer from response to reduce payload size
+          image: offer.image ? {
+            contentType: offer.image.contentType,
+            size: offer.image.size,
+            originalName: offer.image.originalName,
+            uploadedAt: offer.image.uploadedAt
+          } : null
         };
       } catch (error) {
         console.error(`Error fetching user details for userId ${offer.userId}:`, error);
@@ -476,7 +369,8 @@ router.get('/offers', async (req, res) => {
             businessName: 'N/A',
             userType: 'N/A'
           },
-          computedStatus: offer.adminStatus
+          computedStatus: offer.adminStatus,
+          imageUrl: null
         };
       }
     }));
@@ -507,6 +401,10 @@ router.get('/offers', async (req, res) => {
     });
   }
 });
+
+
+
+
 
 // NEW: Admin approve offer
 router.patch('/offers/:id/approve', async (req, res) => {
@@ -538,21 +436,18 @@ router.patch('/offers/:id/approve', async (req, res) => {
 
     console.log(`✅ Offer approved: ${offer.title} by ${reviewedBy || 'Admin'}`);
 
-    // FIXED: Find user by userId Number field, not ObjectId
     const user = await User.findOne({ userId: offer.userId });
 
-    // Send approval notification email
     if (user && user.email) {
       try {
         await sendOfferApprovalNotification({
           ...offer.toObject(),
-          userId: user, // Pass the full user object
+          userId: user,
           businessId: offer.businessId
         }, 'approved');
         console.log(`📧 Approval notification sent to ${user.email}`);
       } catch (emailError) {
         console.error('Failed to send approval notification:', emailError);
-        // Don't fail the whole request if email fails
       }
     } else {
       console.log(`⚠️ User not found for userId: ${offer.userId}`);
@@ -610,21 +505,18 @@ router.patch('/offers/:id/decline', async (req, res) => {
 
     console.log(`❌ Offer declined: ${offer.title} by ${reviewedBy || 'Admin'}`);
 
-    // FIXED: Find user by userId Number field, not ObjectId
     const user = await User.findOne({ userId: offer.userId });
 
-    // Send decline notification email
     if (user && user.email) {
       try {
         await sendOfferApprovalNotification({
           ...offer.toObject(),
-          userId: user, // Pass the full user object
+          userId: user,
           businessId: offer.businessId
         }, 'declined');
         console.log(`📧 Decline notification sent to ${user.email}`);
       } catch (emailError) {
         console.error('Failed to send decline notification:', emailError);
-        // Don't fail the whole request if email fails
       }
     } else {
       console.log(`⚠️ User not found for userId: ${offer.userId}`);
@@ -650,7 +542,6 @@ router.delete('/offers/:id', async (req, res) => {
 
     console.log(`🗑️ Deleting offer ${id}`);
 
-    // First find the offer to get its details
     const offer = await Offer.findById(id).populate('businessId', 'name');
 
     if (!offer) {
@@ -661,7 +552,6 @@ router.delete('/offers/:id', async (req, res) => {
       });
     }
 
-    // Delete the offer
     await Offer.findByIdAndDelete(id);
 
     console.log(`✅ Offer deleted: ${offer.title} (ID: ${offer.offerId})`);
@@ -685,7 +575,7 @@ router.delete('/offers/:id', async (req, res) => {
   }
 });
 
-router.put('/offers/:id', async (req, res) => {
+router.put('/offers/:id', uploadConfig.single('image'), async (req, res) => {
   try {
     const { id } = req.params;
     const { title, discount, category, startDate, endDate, isActive } = req.body;
@@ -698,6 +588,14 @@ router.put('/offers/:id', async (req, res) => {
     }
 
     console.log(`✏️ Admin editing offer ${id}`);
+
+    const existingOffer = await Offer.findById(id);
+    if (!existingOffer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Offer not found'
+      });
+    }
 
     // Validate dates if provided
     if (startDate && endDate) {
@@ -728,6 +626,22 @@ router.put('/offers/:id', async (req, res) => {
       updateData.endDate = endDate ? new Date(endDate) : null;
     }
 
+    // Process new image if uploaded
+    if (req.file) {
+      try {
+        console.log('🖼️ Processing new image for admin edit...');
+        const processedImage = await processOfferImage(req.file);
+        updateData.image = processedImage;
+        console.log('✅ New image processed successfully');
+      } catch (imageError) {
+        console.error('❌ Image processing error:', imageError);
+        return res.status(400).json({
+          success: false,
+          message: 'Image processing failed: ' + (imageError.message || imageError)
+        });
+      }
+    }
+
     const updatedOffer = await Offer.findByIdAndUpdate(
       id,
       updateData,
@@ -735,19 +649,35 @@ router.put('/offers/:id', async (req, res) => {
     ).populate('businessId', 'name');
 
     if (!updatedOffer) {
-      console.log(`❌ Offer not found: ${id}`);
       return res.status(404).json({
         success: false,
-        message: 'Offer not found'
+        message: 'Failed to update offer'
       });
     }
 
     console.log(`✅ Offer updated by admin: ${updatedOffer.title}`);
 
+    // Convert image to base64 for response
+    let imageUrl = null;
+    if (updatedOffer.image && updatedOffer.image.data) {
+      imageUrl = bufferToDataURL(updatedOffer.image.data, updatedOffer.image.contentType);
+    }
+
+    const responseOffer = {
+      ...updatedOffer.toObject(),
+      imageUrl,
+      image: updatedOffer.image ? {
+        contentType: updatedOffer.image.contentType,
+        size: updatedOffer.image.size,
+        originalName: updatedOffer.image.originalName,
+        uploadedAt: updatedOffer.image.uploadedAt
+      } : null
+    };
+
     res.json({
       success: true,
       message: 'Offer updated successfully by admin',
-      offer: updatedOffer
+      offer: responseOffer
     });
 
   } catch (error) {
@@ -767,30 +697,21 @@ router.get('/subscription-analytics', async (req, res) => {
     const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
 
     const analytics = {
-      // Current subscription counts
       totalSubscriptions: await Subscription.countDocuments({ status: 'active' }),
       premiumUsers: await Subscription.countDocuments({ planId: '2', status: 'active' }),
       freeUsers: await Subscription.countDocuments({ planId: '1', status: 'active' }),
-
-      // Downgrade statistics
       scheduledDowngrades: await Subscription.countDocuments({
         downgradeScheduled: true,
         status: 'active'
       }),
-
-      // Grace period users
       usersInGracePeriod: await Subscription.countDocuments({
         isInGracePeriod: true,
         status: 'active'
       }),
-
-      // Recent activity
       recentDowngrades: await SubscriptionHistory.countDocuments({
         action: 'downgrade_processed',
         effectiveDate: { $gte: lastMonth }
       }),
-
-      // Content suspension stats
       suspendedBusinesses: await Business.countDocuments({
         status: 'suspended',
         suspensionReason: { $regex: /free plan limit|downgrade/i }
@@ -799,8 +720,6 @@ router.get('/subscription-analytics', async (req, res) => {
         status: 'suspended',
         suspensionReason: { $regex: /free plan limit|downgrade/i }
       }),
-
-      // Upcoming downgrades (next 7 days)
       upcomingDowngrades: await Subscription.countDocuments({
         downgradeScheduled: true,
         downgradeEffectiveDate: {

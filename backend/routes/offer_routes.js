@@ -1,3 +1,4 @@
+// routes/offers.js
 import express from 'express';
 import Offer from '../models/offer.js';
 import Business from '../models/business.js';
@@ -5,32 +6,41 @@ import User from '../models/user.js';
 import Subscription from '../models/subscription.js';
 import SubscriptionHistory from '../models/subscription_history.js';
 import SubscriptionLog from '../models/subscription_log.js';
-import { sendOfferApprovalNotification, sendOfferEditNotification } from '../controllers/user_controller.js'
+import { sendOfferApprovalNotification, sendOfferEditNotification, getUserName } from '../controllers/user_controller.js';
+import { uploadConfig, processOfferImage, bufferToDataURL } from '../Utills/imageUtils.js';
 
 const router = express.Router();
 
-
-router.post('', async (req, res) => {
+/**
+ * CREATE OFFER WITH OPTIONAL IMAGE
+ * POST /
+ * multipart/form-data (optional 'image' file)
+ */
+router.post('', uploadConfig.single('image'), async (req, res) => {
   try {
-    console.log('📥 Offer creation request received:', req.body);
+    console.log('📥 Offer creation request received');
+    console.log('Body:', req.body);
+    console.log('File:', req.file ? {
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    } : 'No file');
 
     const { userId, businessId, title, discount, category, startDate, endDate, isActive } = req.body;
 
     // Basic validation
     if (!userId || !businessId || !title || !discount) {
-      console.log('❌ Missing required fields:', { userId: !!userId, businessId: !!businessId, title: !!title, discount: !!discount });
+      console.log('❌ Missing required fields');
       return res.status(400).json({
         success: false,
         message: 'User ID, business ID, title, and discount are required'
       });
     }
 
-    console.log('🔍 Looking for business:', { businessId, userId });
-
-    // Verify the business belongs to the user - FIXED: Convert userId to number if needed
+    // Verify business belongs to user
     const business = await Business.findOne({
       _id: businessId,
-      userId: parseInt(userId) // ✅ Ensure consistent data type
+      userId: parseInt(userId)
     });
 
     if (!business) {
@@ -43,7 +53,7 @@ router.post('', async (req, res) => {
 
     console.log('✅ Business found:', business.name);
 
-    // Check user's subscription status - FIXED: Better user lookup
+    // Check subscription and limits
     const user = await User.findOne({
       $or: [
         { userId: parseInt(userId) },
@@ -52,73 +62,20 @@ router.post('', async (req, res) => {
     });
 
     if (!user) {
-      console.log('❌ User not found with userId:', userId);
+      console.log('❌ User not found');
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    console.log('✅ User found:', user.email);
-
-    // Check for active subscription
-    const activeSubscription = await Subscription.findOne({
-      $or: [
-        { userId: parseInt(userId) },
-        { userId: userId.toString() },
-        { userEmail: user.email.toLowerCase().trim() }
-      ],
-      status: 'active'
-    }).sort({ createdAt: -1 });
-
-    console.log('🔍 Active subscription:', activeSubscription ? 'Found' : 'Not found');
-
-    // For development/testing - allow offer creation without subscription
-    if (!activeSubscription) {
-      console.log('⚠️ No active subscription found - proceeding with Free plan limits');
-      // You can uncomment this return statement if you want to enforce subscription:
-      /*
-      return res.status(403).json({
-        success: false,
-        message: 'Please activate a subscription plan to create offers.',
-        requiresSubscription: true
-      });
-      */
-    }
-
-    // Count existing offers for this user - FIXED: More robust counting
-    console.log('🔍 Counting existing offers...');
+    // Count existing offers (exclude 'declined')
     const existingOffersCount = await Offer.countDocuments({
       userId: parseInt(userId),
-      adminStatus: { $ne: 'declined' } // Count pending and approved offers
+      adminStatus: { $ne: 'declined' }
     });
 
     console.log(`📊 Existing offers count: ${existingOffersCount}`);
-
-    // Determine plan limits
-    const now = new Date();
-    const isPremium = activeSubscription &&
-      activeSubscription.planId === '2' &&
-      activeSubscription.status === 'active' &&
-      (!activeSubscription.endDate || new Date(activeSubscription.endDate) > now);
-
-    const maxOffers = isPremium ? 9 : 3;
-    const planType = isPremium ? 'Premium' : 'Free';
-
-    console.log(`📋 Plan analysis: ${planType} plan allows ${maxOffers} offers`);
-
-    // Check offer limit
-    if (existingOffersCount >= maxOffers) {
-      console.log(`❌ Offer limit reached: ${existingOffersCount}/${maxOffers}`);
-      return res.status(400).json({
-        success: false,
-        message: `${planType} plan allows maximum ${maxOffers} offer${maxOffers > 1 ? 's' : ''}. You have ${existingOffersCount}/${maxOffers} offers.`,
-        planUpgradeRequired: !isPremium,
-        currentCount: existingOffersCount,
-        maxAllowed: maxOffers,
-        planType: planType
-      });
-    }
 
     // Validate dates if provided
     if (startDate && endDate) {
@@ -142,44 +99,65 @@ router.post('', async (req, res) => {
 
     console.log('🔧 Creating offer...');
 
-    // Create the offer - FIXED: Ensure proper data types
+    // Prepare offer data
     const offerData = {
-      userId: parseInt(userId), // ✅ Ensure number type
-      businessId: businessId,   // Keep as ObjectId
+      userId: parseInt(userId),
+      businessId: businessId,
       title: title.trim(),
       discount: discount.trim(),
       category: category || '',
       startDate: startDate ? new Date(startDate) : null,
       endDate: endDate ? new Date(endDate) : null,
       isActive: isActive !== undefined ? Boolean(isActive) : true,
-      adminStatus: 'pending',   // ✅ This should now work with fixed schema
+      adminStatus: 'pending',
       createdAt: new Date(),
       updatedAt: new Date()
     };
 
-    const offer = new Offer(offerData);
+    // Process image if uploaded
+    if (req.file) {
+      try {
+        console.log('🖼️ Processing uploaded image...');
+        const processedImage = await processOfferImage(req.file);
+        offerData.image = processedImage;
+        console.log('✅ Image processed successfully:', {
+          sizeKB: (processedImage.size / 1024).toFixed(2),
+          originalName: processedImage.originalName || req.file.originalname
+        });
+      } catch (imageError) {
+        console.error('❌ Image processing error:', imageError);
+        return res.status(400).json({
+          success: false,
+          message: 'Image processing failed: ' + (imageError.message || imageError)
+        });
+      }
+    }
 
-    // Save with better error handling
+    // Create the offer
+    const offer = new Offer(offerData);
     const savedOffer = await offer.save();
     console.log('✅ Offer saved to database with ID:', savedOffer._id);
 
-    // Populate business info
-    const populatedOffer = await Offer.findById(savedOffer._id)
+    // Populate business info and prepare response
+    const populatedOffer = await Offer.findById(savedOffer._1 || savedOffer._id)
       .populate('businessId', 'name');
 
-    console.log('✅ Business info populated');
+    // Convert image to base64 for response if it exists
+    let responseOffer = populatedOffer.toObject();
+    if (responseOffer.image && responseOffer.image.data) {
+      responseOffer.imageUrl = bufferToDataURL(
+        responseOffer.image.data,
+        responseOffer.image.contentType
+      );
+      delete responseOffer.image; // Remove buffer from response
+    }
 
     console.log(`🎉 Offer created successfully: ${populatedOffer.title}`);
 
     res.json({
       success: true,
       message: 'Offer submitted successfully and is pending admin approval.',
-      offer: populatedOffer,
-      planInfo: {
-        planType: planType,
-        offersUsed: existingOffersCount + 1,
-        maxOffers: maxOffers
-      },
+      offer: responseOffer,
       pendingApproval: true
     });
 
@@ -187,7 +165,6 @@ router.post('', async (req, res) => {
     console.error('❌ Error creating offer:', error);
     console.error('❌ Error stack:', error.stack);
 
-    // Check for specific MongoDB errors
     if (error.name === 'ValidationError') {
       const validationErrors = Object.values(error.errors).map(err => err.message);
       return res.status(400).json({
@@ -212,7 +189,10 @@ router.post('', async (req, res) => {
   }
 });
 
-
+/**
+ * GET USER OFFERS WITH IMAGES
+ * GET /user/:userId
+ */
 router.get('/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -220,21 +200,35 @@ router.get('/user/:userId', async (req, res) => {
       .populate('businessId', 'name')
       .sort({ createdAt: -1 });
 
-    // Add computed status including admin approval status
-    const offersWithStatus = offers.map(offer => {
+    // Convert images to base64 for each offer and compute status
+    const offersWithImages = offers.map(offer => {
+      const offerObj = offer.toObject();
+
+      if (offerObj.image && offerObj.image.data) {
+        try {
+          offerObj.imageUrl = bufferToDataURL(
+            offerObj.image.data,
+            offerObj.image.contentType
+          );
+        } catch (err) {
+          console.warn('⚠️ Failed to convert image to base64 for offer', offerObj._id, err);
+        }
+        delete offerObj.image; // Remove buffer from response
+      }
+
+      // Add computed status
       const now = new Date();
-      const startDate = offer.startDate ? new Date(offer.startDate) : null;
-      const endDate = offer.endDate ? new Date(offer.endDate) : null;
+      const startDate = offerObj.startDate ? new Date(offerObj.startDate) : null;
+      const endDate = offerObj.endDate ? new Date(offerObj.endDate) : null;
 
-      let computedStatus = offer.adminStatus; // Start with admin status
+      let computedStatus = offerObj.adminStatus;
 
-      // Only compute time-based status if approved
-      if (offer.adminStatus === 'approved') {
+      if (offerObj.adminStatus === 'approved') {
         if (startDate && startDate > now) {
           computedStatus = 'approved-scheduled';
         } else if (endDate && endDate < now) {
           computedStatus = 'approved-expired';
-        } else if (!offer.isActive) {
+        } else if (!offerObj.isActive) {
           computedStatus = 'approved-inactive';
         } else {
           computedStatus = 'approved-active';
@@ -242,15 +236,15 @@ router.get('/user/:userId', async (req, res) => {
       }
 
       return {
-        ...offer.toObject(),
+        ...offerObj,
         computedStatus,
-        canEdit: offer.adminStatus === 'pending' || offer.adminStatus === 'declined'
+        canEdit: offerObj.adminStatus === 'pending' || offerObj.adminStatus === 'declined'
       };
     });
 
     res.json({
       success: true,
-      offers: offersWithStatus
+      offers: offersWithImages
     });
   } catch (error) {
     console.error('Error fetching offers:', error);
@@ -261,18 +255,16 @@ router.get('/user/:userId', async (req, res) => {
   }
 });
 
-
-
-
-
-
-// Update offer
-router.put('/:id', async (req, res) => {
+/**
+ * UPDATE OFFER WITH OPTIONAL IMAGE
+ * PUT /:id
+ * multipart/form-data (optional 'image' file)
+ */
+router.put('/:id', uploadConfig.single('image'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { businessId, title, discount, category, startDate, endDate, isActive, requiresReapproval } = req.body;
+    const { businessId, title, discount, category, startDate, endDate, isActive } = req.body;
 
-    // Find the existing offer first
     const existingOffer = await Offer.findById(id);
     if (!existingOffer) {
       return res.status(404).json({
@@ -296,12 +288,13 @@ router.put('/:id', async (req, res) => {
 
     // Prepare update data
     const updateData = {
-      title,
-      discount,
-      category,
-      isActive,
       updatedAt: new Date()
     };
+
+    if (title !== undefined) updateData.title = title;
+    if (discount !== undefined) updateData.discount = discount;
+    if (category !== undefined) updateData.category = category;
+    if (isActive !== undefined) updateData.isActive = isActive;
 
     if (businessId) {
       updateData.businessId = businessId;
@@ -315,30 +308,39 @@ router.put('/:id', async (req, res) => {
       updateData.endDate = endDate ? new Date(endDate) : null;
     }
 
-    // Check if offer content has actually changed
+    // Process new image if uploaded
+    if (req.file) {
+      try {
+        console.log('🖼️ Processing new image for update...');
+        const processedImage = await processOfferImage(req.file);
+        updateData.image = processedImage;
+        console.log('✅ New image processed successfully');
+      } catch (imageError) {
+        console.error('❌ Image processing error:', imageError);
+        return res.status(400).json({
+          success: false,
+          message: 'Image processing failed: ' + (imageError.message || imageError)
+        });
+      }
+    }
+
+    // Check if offer content has changed
     const contentChanged = (
-      existingOffer.title !== title ||
-      existingOffer.discount !== discount ||
-      existingOffer.category !== category ||
-      (existingOffer.startDate?.toISOString().split('T')[0] !== startDate) ||
-      (existingOffer.endDate?.toISOString().split('T')[0] !== endDate) ||
-      existingOffer.businessId.toString() !== businessId
+      (title !== undefined && existingOffer.title !== title) ||
+      (discount !== undefined && existingOffer.discount !== discount) ||
+      (category !== undefined && existingOffer.category !== category) ||
+      (startDate !== undefined && ((existingOffer.startDate && existingOffer.startDate.toISOString().split('T')[0]) !== startDate)) ||
+      (endDate !== undefined && ((existingOffer.endDate && existingOffer.endDate.toISOString().split('T')[0]) !== endDate)) ||
+      (businessId && existingOffer.businessId.toString() !== businessId) ||
+      !!req.file // Image changed
     );
 
-    console.log(`Offer ${id} edit attempt:`, {
-      contentChanged,
-      currentStatus: existingOffer.adminStatus,
-      title: { old: existingOffer.title, new: title },
-      discount: { old: existingOffer.discount, new: discount }
-    });
-
-    // If content changed and offer was previously approved/declined, reset to pending
     let statusReset = false;
     if (contentChanged && (existingOffer.adminStatus === 'approved' || existingOffer.adminStatus === 'declined')) {
       updateData.adminStatus = 'pending';
-      updateData.adminComments = '';     // Clear previous admin comments
-      updateData.reviewedBy = null;       // Clear previous reviewer
-      updateData.reviewedAt = null;       // Clear previous review date
+      updateData.adminComments = '';
+      updateData.reviewedBy = null;
+      updateData.reviewedAt = null;
       statusReset = true;
 
       console.log(`🔄 Offer ${id} content changed - resetting status from ${existingOffer.adminStatus} to pending`);
@@ -355,10 +357,20 @@ router.put('/:id', async (req, res) => {
       });
     }
 
+    // Convert image buffer to base64 for response if present
+    let responseOffer = updatedOffer.toObject();
+    if (responseOffer.image && responseOffer.image.data) {
+      try {
+        responseOffer.imageUrl = bufferToDataURL(responseOffer.image.data, responseOffer.image.contentType);
+      } catch (e) {
+        console.warn('⚠️ Failed to convert updated offer image to base64', e);
+      }
+      delete responseOffer.image;
+    }
+
     // Send notification email if status was reset to pending
     if (statusReset) {
       try {
-        // Get user details for notification
         const user = await User.findOne({ userId: updatedOffer.userId });
         if (user) {
           await sendOfferEditNotification(user, updatedOffer, existingOffer.adminStatus);
@@ -368,25 +380,22 @@ router.put('/:id', async (req, res) => {
         }
       } catch (emailError) {
         console.error('❌ Failed to send edit notification email:', emailError);
-        // Don't fail the whole request if email fails
+        // Do not fail the update if email fails
       }
     }
 
-    // Prepare response message
     let message = 'Offer updated successfully';
     if (statusReset) {
       message = 'Offer updated successfully and resubmitted for admin approval';
-    } else if (existingOffer.adminStatus === 'declined') {
-      message = 'Offer updated successfully';
     }
 
     res.json({
       success: true,
-      message: message,
-      offer: updatedOffer,
-      statusReset: statusReset,
+      message,
+      offer: responseOffer,
+      statusReset,
       previousStatus: existingOffer.adminStatus,
-      contentChanged: contentChanged
+      contentChanged
     });
 
   } catch (error) {
@@ -399,11 +408,13 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-
+/**
+ * DELETE OFFER
+ * DELETE /:id
+ */
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-
     const offer = await Offer.findByIdAndDelete(id);
 
     if (!offer) {
@@ -426,6 +437,10 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+/**
+ * OFFER STATUS HISTORY
+ * GET /:id/status-history
+ */
 router.get('/:id/status-history', async (req, res) => {
   try {
     const { id } = req.params;
@@ -450,9 +465,9 @@ router.get('/:id/status-history', async (req, res) => {
       offer: {
         id: offer._id,
         title: offer.title,
-        business: offer.businessId.name,
+        business: offer.businessId?.name || null,
         currentStatus: offer.adminStatus,
-        wasResubmitted: wasResubmitted,
+        wasResubmitted,
         lastUpdated: offer.updatedAt,
         lastReviewed: offer.reviewedAt,
         reviewedBy: offer.reviewedBy,
@@ -470,7 +485,10 @@ router.get('/:id/status-history', async (req, res) => {
   }
 });
 
-// Toggle offer status (activate/deactivate)
+/**
+ * TOGGLE OFFER STATUS (activate/deactivate)
+ * PATCH /:id/toggle-status
+ */
 router.patch('/:id/toggle-status', async (req, res) => {
   try {
     const { id } = req.params;
@@ -495,7 +513,7 @@ router.patch('/:id/toggle-status', async (req, res) => {
     res.json({
       success: true,
       message: `Offer ${isActive ? 'activated' : 'deactivated'} successfully`,
-      offer: offer
+      offer
     });
   } catch (error) {
     console.error('Error toggling offer status:', error);
@@ -506,6 +524,10 @@ router.patch('/:id/toggle-status', async (req, res) => {
   }
 });
 
+/**
+ * STATS FOR USER
+ * GET /stats/:userId
+ */
 router.get('/stats/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -551,17 +573,5 @@ router.get('/stats/:userId', async (req, res) => {
     });
   }
 });
-
-
-
-
-
-
-
-
-
-
-
-
 
 export default router;

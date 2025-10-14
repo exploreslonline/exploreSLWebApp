@@ -4,7 +4,11 @@ import bcrypt from 'bcryptjs';
 import Subscription from '../models/subscription.js';
 import SubscriptionHistory from '../models/subscription_history.js';
 import SubscriptionLog from '../models/subscription_log.js';
-import { sendWelcomeEmail, sendStatusEmail } from '../controllers/user_controller.js'
+import Business from '../models/business.js';
+import Offer from '../models/offer.js';
+import crypto from 'crypto';
+import nodemailer from 'nodemailer';
+import { sendWelcomeEmail, sendStatusEmail, createTransporter, getUserName, checkUserPlanLimits } from '../controllers/user_controller.js'
 
 export const router = express.Router();
 
@@ -157,7 +161,6 @@ router.post('/login', async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
-
 
 router.post('/forgot-password', async (req, res) => {
   try {
