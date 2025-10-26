@@ -29,7 +29,7 @@ const UserShowpage = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
 
-
+const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   useEffect(() => {
     if (!isLoading && !adminUser) {
       navigate("/adminsignin");
@@ -79,7 +79,7 @@ const UserShowpage = () => {
   };
   const fetchAdmins = async () => {
     try {
-      const response = await axios.get("http://localhost:5555/api/admin/admins"); // Adjust endpoint as needed
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/admin/admins`); // Adjust endpoint as needed
       if (response.data.success) {
         setAdmins(response.data.admins);
       } else {
@@ -93,7 +93,7 @@ const UserShowpage = () => {
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const response = await axios.get("http://localhost:5555/api/auth/users");
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/auth/users`);
       console.log('Full API response:', response.data);
 
       if (response.data.success) {
@@ -123,7 +123,7 @@ const UserShowpage = () => {
   const handleDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this user?")) {
       try {
-        const response = await axios.delete(`http://localhost:5555/api/auth/users/${id}`);
+        const response = await axios.delete(`${VITE_BACKEND_URL}/api/auth/users/${id}`);
         if (response.data.success) {
           setUsers(users.filter((user) => user._id !== id));
         } else {
@@ -138,7 +138,7 @@ const UserShowpage = () => {
   const handleDeleteAdmin = async (id) => {
     if (window.confirm("Are you sure you want to delete this admin?")) {
       try {
-        const response = await axios.delete(`http://localhost:5555/api/admin/admins/${id}`);
+        const response = await axios.delete(`${VITE_BACKEND_URL}/api/admin/admins/${id}`);
         if (response.data.success) {
           setAdmins(admins.filter((admin) => admin._id !== id));
         } else {
@@ -153,7 +153,7 @@ const UserShowpage = () => {
 
   const updateStatus = async (id, action) => {
     try {
-      const response = await axios.patch(`http://localhost:5555/api/auth/users/${id}/${action}`);
+      const response = await axios.patch(`${VITE_BACKEND_URL}/api/auth/users/${id}/${action}`);
       if (response.data.success) {
         fetchUsers(); // refresh after update
       }
@@ -233,7 +233,7 @@ const UserShowpage = () => {
 
   const handleUpdateUser = async (id) => {
     try {
-      const response = await axios.put(`http://localhost:5555/api/auth/users/${id}`, editUserForm);
+      const response = await axios.put(`${VITE_BACKEND_URL}/api/auth/users/${id}`, editUserForm);
       if (response.data.success) {
         fetchUsers(); // refresh the list
         setEditingUser(null);
@@ -259,7 +259,7 @@ const UserShowpage = () => {
 
   const handleUpdateAdmin = async (id) => {
     try {
-      const response = await axios.put(`http://localhost:5555/api/admin/admins/${id}`, editAdminForm);
+      const response = await axios.put(`${VITE_BACKEND_URL}/api/admin/admins/${id}`, editAdminForm);
       if (response.data.success) {
         fetchAdmins(); // refresh the list
         setEditingAdmin(null);

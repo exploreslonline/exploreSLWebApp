@@ -407,27 +407,13 @@ app.post('/payhere-notify', express.urlencoded({ extended: true }), async (req, 
       payhere_currency,
       status_code,
       md5sig,
-      status_message,
       custom_1,
       custom_2,
       email,
-      recurring_token,
-      subscription_id,
-      event_type,
-      next_occurrence_date
+      recurring_token,      // CRITICAL: Capture this
+      subscription_id,      // CRITICAL: Capture this
+      next_occurrence_date  // CRITICAL: Capture this
     } = req.body;
-
-    // Validate required fields
-    if (!merchant_id || !order_id || !payhere_amount || !payhere_currency || !status_code || !md5sig) {
-      console.error('❌ Missing required notification fields');
-      return res.status(400).send('Missing required fields');
-    }
-
-    // Verify merchant ID
-    if (merchant_id.trim() !== payhereConfig.merchantId.trim()) {
-      console.error('❌ Merchant ID mismatch');
-      return res.status(400).send('Merchant ID mismatch');
-    }
 
     // Verify hash
     const isValidHash = verifyPayHereHash(req.body, payhereConfig.merchantSecret);
@@ -436,20 +422,35 @@ app.post('/payhere-notify', express.urlencoded({ extended: true }), async (req, 
       return res.status(400).send('Invalid hash');
     }
 
-    console.log('✅ Hash verification successful');
-    console.log(`Status: ${status_code} - ${status_message}`);
-
-    // Handle successful payments
-    if (status_code === '2') {
-      if (event_type === 'SUBSCRIPTION_PAYMENT' && recurring_token) {
-        console.log('🔄 Processing recurring payment...');
-        await handleRecurringPayment(req.body);
+    // CRITICAL FIX: Check if this is a recurring payment
+    if (recurring_token && subscription_id) {
+      console.log('🔄 Recurring payment detected');
+      
+      if (status_code === '2') {
+        // Successful recurring payment - renew subscription
+        await handleRecurringPaymentSuccess({
+          recurring_token,
+          subscription_id,
+          payment_id,
+          amount: payhere_amount,
+          currency: payhere_currency,
+          next_occurrence_date,
+          email
+        });
       } else {
-        console.log('💰 Processing initial payment...');
-        await handleInitialPayment(req.body);
+        // Failed recurring payment
+        await handleRecurringPaymentFailure({
+          recurring_token,
+          subscription_id,
+          email,
+          status_code
+        });
       }
     } else {
-      console.log(`❌ Payment failed or cancelled: ${status_code} - ${status_message}`);
+      // Initial payment
+      if (status_code === '2') {
+        await handleInitialPayment(req.body);
+      }
     }
 
     res.status(200).send('OK');
@@ -1553,53 +1554,186 @@ cron.schedule('0 3 * * 0', async () => {
 });
 
 cron.schedule('0 2 * * *', async () => {
-  console.log('🕐 Running scheduled downgrade processing...');
+  console.log('🔄 Running daily subscription downgrade processor...');
+
   try {
-    const response = await fetch(`${process.env.BACKEND_URL}/api/subscription/process-downgrades`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + process.env.CRON_JOB_TOKEN
-      }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Find subscriptions that should be downgraded today
+    const subscriptionsToDowngrade = await Subscription.find({
+      downgradeScheduled: true,
+      downgradeEffectiveDate: { $lte: today },
+      status: 'active',
+      planId: '2'
     });
 
-    const result = await response.json();
-    console.log('✅ Scheduled downgrade processing result:', result);
+    console.log(`📋 Found ${subscriptionsToDowngrade.length} subscriptions to downgrade`);
+
+    const results = [];
+
+    for (const subscription of subscriptionsToDowngrade) {
+      try {
+        console.log(`🔄 Processing downgrade for user ${subscription.userId}`);
+
+        // Create new free subscription
+        const freeSubscription = new Subscription({
+          userId: subscription.userId,
+          userEmail: subscription.userEmail,
+          planId: '1',
+          planName: 'Free Plan',
+          status: 'active',
+          billingCycle: 'monthly',
+          amount: 0,
+          currency: subscription.currency,
+          paymentMethod: 'downgrade',
+          autoRenew: false,
+          startDate: today,
+          endDate: null, // Free plan doesn't expire
+          createdAt: today
+        });
+
+        await freeSubscription.save();
+
+        // Update old subscription to expired
+        await Subscription.updateOne(
+          { _id: subscription._id },
+          {
+            $set: {
+              status: 'expired',
+              endDate: today,
+              autoRenew: false,
+              downgradeProcessedDate: today,
+              updatedAt: today
+            },
+            $unset: {
+              downgradeScheduled: '',
+              downgradeScheduledDate: '',
+              downgradeReason: '',
+              downgradeEffectiveDate: '',
+              downgradeTargetPlan: '',
+              payhereRecurringToken: '' // Remove recurring token
+            }
+          }
+        );
+
+        // Apply free plan limitations
+        const limitResult = await applyFreePlanLimitations(subscription.userId);
+
+        // Log the downgrade
+        await SubscriptionHistory.create({
+          userId: subscription.userId,
+          userEmail: subscription.userEmail,
+          action: 'downgrade_processed',
+          fromPlan: 'Premium Plan',
+          toPlan: 'Free Plan',
+          effectiveDate: today,
+          reason: subscription.downgradeReason || 'Automatic downgrade after subscription end',
+          notes: `Downgraded to Free plan. ${limitResult?.businessesSuspended || 0} businesses and ${limitResult?.offersSuspended || 0} offers suspended.`
+        });
+
+        await SubscriptionLog.create({
+          subscriptionId: subscription._id,
+          userId: subscription.userId,
+          userEmail: subscription.userEmail,
+          action: 'downgrade_processed',
+          details: {
+            processedDate: today,
+            fromPlan: 'Premium Plan',
+            toPlan: 'Free Plan',
+            businessesSuspended: limitResult?.businessesSuspended || 0,
+            offersSuspended: limitResult?.offersSuspended || 0,
+            newSubscriptionId: freeSubscription._id
+          }
+        });
+
+        results.push({
+          userId: subscription.userId,
+          success: true,
+          message: 'Successfully downgraded to Free plan'
+        });
+
+        console.log(`✅ Successfully downgraded user ${subscription.userId}`);
+
+        // Send notification email
+        const user = await User.findOne({ userId: subscription.userId });
+        if (user) {
+          await sendDowngradeCompletedEmail({
+            email: user.email,
+            userName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+            suspendedBusinesses: limitResult?.businessesSuspended || 0,
+            suspendedOffers: limitResult?.offersSuspended || 0
+          });
+        }
+
+      } catch (error) {
+        console.error(`❌ Error processing downgrade for user ${subscription.userId}:`, error);
+        results.push({
+          userId: subscription.userId,
+          success: false,
+          error: error.message
+        });
+      }
+    }
+
+    console.log('✅ Daily downgrade processing completed');
+    console.log(`   Total processed: ${results.length}`);
+    console.log(`   Successful: ${results.filter(r => r.success).length}`);
+    console.log(`   Failed: ${results.filter(r => !r.success).length}`);
+
   } catch (error) {
-    console.error('❌ Error in scheduled downgrade processing:', error);
+    console.error('❌ Error in daily downgrade processor:', error);
   }
 });
 
-// Send downgrade warning emails (3 days before)
+// ALSO ADD: Send reminder emails 3 days before downgrade
 cron.schedule('0 9 * * *', async () => {
-  console.log('📧 Sending downgrade warning emails...');
+  console.log('📧 Sending downgrade reminder emails...');
+  
   try {
     const threeDaysFromNow = new Date();
     threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
     threeDaysFromNow.setHours(0, 0, 0, 0);
+    
+    const fourDaysFromNow = new Date(threeDaysFromNow);
+    fourDaysFromNow.setDate(fourDaysFromNow.getDate() + 1);
 
+    // Find subscriptions expiring in 3 days
     const upcomingDowngrades = await Subscription.find({
       downgradeScheduled: true,
       downgradeEffectiveDate: {
         $gte: threeDaysFromNow,
-        $lt: new Date(threeDaysFromNow.getTime() + 24 * 60 * 60 * 1000)
-      }
+        $lt: fourDaysFromNow
+      },
+      status: 'active',
+      planId: '2'
     });
 
+    console.log(`📋 Found ${upcomingDowngrades.length} subscriptions expiring in 3 days`);
+
     for (const subscription of upcomingDowngrades) {
-      const impactAnalysis = await getDowngradeImpactAnalysis(subscription.userId);
-      await sendDowngradeReminderEmail({
-        email: subscription.userEmail,
-        userName: await getUserName(subscription.userId),
-        effectiveDate: subscription.downgradeEffectiveDate,
-        daysRemaining: 3,
-        impactAnalysis
-      });
+      try {
+        const user = await User.findOne({ userId: subscription.userId });
+        if (!user) continue;
+
+        const impactAnalysis = await getDowngradeImpactAnalysis(subscription.userId);
+
+        await sendDowngradeReminderEmail({
+          email: user.email,
+          userName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+          effectiveDate: subscription.downgradeEffectiveDate,
+          daysRemaining: 3,
+          impactAnalysis
+        });
+
+        console.log(`✅ Sent reminder email to ${user.email}`);
+      } catch (error) {
+        console.error(`❌ Failed to send reminder for user ${subscription.userId}:`, error);
+      }
     }
 
-    console.log(`📧 Sent ${upcomingDowngrades.length} downgrade warning emails`);
   } catch (error) {
-    console.error('❌ Error sending downgrade warnings:', error);
+    console.error('❌ Error sending downgrade reminders:', error);
   }
 });
 

@@ -41,7 +41,7 @@ const AdminSubscriptionsManagement = () => {
   const navigate = useNavigate();
 
   // API base URL
-  const API_BASE_URL = 'http://localhost:5555';
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
 
   // Enhanced styles
   const styles = {
@@ -681,7 +681,7 @@ const AdminSubscriptionsManagement = () => {
         params.append('status', filter);
       }
 
-      const url = `${API_BASE_URL}/api/admin/auto-renewal-subscriptions?${params}`;
+      const url = `${VITE_BACKEND_URL}/api/admin/auto-renewal-subscriptions?${params}`;
       console.log('Fetching from URL:', url);
 
       const response = await fetch(url, {
@@ -743,7 +743,7 @@ const AdminSubscriptionsManagement = () => {
         params.append('status', filter);
       }
 
-      const url = `${API_BASE_URL}/api/admin/free-subscription-users?${params}`;
+      const url = `${VITE_BACKEND_URL}/api/admin/free-subscription-users?${params}`;
       console.log('Fetching from URL:', url);
 
       const response = await fetch(url, {
@@ -791,7 +791,7 @@ const AdminSubscriptionsManagement = () => {
   const fetchMonitoringData = async () => {
     try {
       console.log('Fetching monitoring data...');
-      const response = await fetch(`${API_BASE_URL}/api/admin/renewal-monitoring`, {
+      const response = await fetch(`${VITE_BACKEND_URL}/api/admin/renewal-monitoring`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -819,7 +819,7 @@ const AdminSubscriptionsManagement = () => {
       setSuccess('');
       console.log('Testing connection...');
       
-      const response = await fetch(`${API_BASE_URL}/api/admin/debug-subscriptions`, {
+      const response = await fetch(`${VITE_BACKEND_URL}/api/admin/debug-subscriptions`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

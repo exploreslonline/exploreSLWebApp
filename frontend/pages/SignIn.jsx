@@ -10,6 +10,8 @@ const SignIn = () => {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const navigate = useNavigate();
 
+
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   // Get login function from AuthContext
   const { login } = useContext(AuthContext);
 
@@ -26,7 +28,7 @@ const handleSubmit = async (e) => {
   setIsLoggingIn(true);
 
   try {
-    const response = await axios.post("http://localhost:5555/api/auth/login", {
+    const response = await axios.post(`${VITE_BACKEND_URL}/api/auth/login`, {
       email,
       password,
     });

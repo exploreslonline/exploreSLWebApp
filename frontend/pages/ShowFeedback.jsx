@@ -24,9 +24,12 @@ const ShowFeedback = () => {
     fetchFeedbacks();
   }, []);
 
+
+
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   const fetchFeedbacks = () => {
     setLoading(true);
-    Axios.get('http://localhost:5555/feedback')
+    Axios.get(`${VITE_BACKEND_URL}/feedback`)
       .then((response) => {
         if (Array.isArray(response.data)) {
           setFeedbackList(response.data);
@@ -56,7 +59,7 @@ const ShowFeedback = () => {
 
   const handleUpdate = async () => {
     try {
-      const response = await Axios.put(`http://localhost:5555/feedback/${editingFeedback._id}`, updatedFeedback);
+      const response = await Axios.put(`${VITE_BACKEND_URL}/feedback/${editingFeedback._id}`, updatedFeedback);
       if (response.status === 200) {
         const updatedList = feedbacklist.map((feedback) =>
           feedback._id === editingFeedback._id ? { ...feedback, ...updatedFeedback } : feedback
@@ -74,7 +77,7 @@ const ShowFeedback = () => {
   const handleDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this feedback?")) {
       try {
-        const response = await Axios.delete(`http://localhost:5555/feedback/${id}`);
+        const response = await Axios.delete(`${VITE_BACKEND_URL}/feedback/${id}`);
         if (response.status === 200) {
           setFeedbackList(feedbacklist.filter((feedback) => feedback._id !== id));
         } else {

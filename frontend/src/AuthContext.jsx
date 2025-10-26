@@ -10,7 +10,7 @@ export const AuthProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [cancellationInfo, setCancellationInfo] = useState(null);
   const [isInGracePeriod, setIsInGracePeriod] = useState(false);
-
+const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   // Load user from localStorage on app startup and check expiry
   useEffect(() => {
     const checkAuthStatus = () => {
@@ -85,7 +85,7 @@ export const AuthProvider = ({ children }) => {
     try {
       console.log('Checking subscription status with cancellation for:', userData.email);
 
-      const response = await axios.post('http://localhost:5555/api/subscription/check-with-cancellation', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/subscription/check-with-cancellation`, {
         email: userData.email,
         userId: userData.userId || userData._id
       });

@@ -37,6 +37,8 @@ const BusinessUserProfile = () => {
   const [editingOffer, setEditingOffer] = useState(null);
   const [showAutoRenewalManager, setShowAutoRenewalManager] = useState(false);
 
+
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   // ENHANCED: Better submission protection
   const [submissionStates, setSubmissionStates] = useState({
     creatingBusiness: false,
@@ -186,7 +188,7 @@ const BusinessUserProfile = () => {
   // ENHANCED: Separate data fetching functions that return data
   const fetchBusinessesData = async (userId) => {
     try {
-      const response = await axios.get(`http://localhost:5555/api/businesses/user/${userId}`);
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/businesses/user/${userId}`);
       if (response.data.success) {
         setBusinesses(response.data.businesses);
         return response.data.businesses;
@@ -201,7 +203,7 @@ const BusinessUserProfile = () => {
 
   const fetchOffersData = async (userId) => {
     try {
-      const response = await axios.get(`http://localhost:5555/api/offers/user/${userId}`);
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/offers/user/${userId}`);
       if (response.data.success) {
         setOffers(response.data.offers);
         return response.data.offers;
@@ -248,7 +250,7 @@ const BusinessUserProfile = () => {
     try {
       console.log('Checking plan limits for user:', userId);
 
-      const response = await axios.post('http://localhost:5555/api/user/check-plan-limits', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/user/check-plan-limits`, {
         userId: userId,
         planId: subscription.planId
       });
@@ -492,7 +494,7 @@ const BusinessUserProfile = () => {
       const token = localStorage.getItem('token');
 
       const profileResponse = await axios.post(
-        'http://localhost:5555/api/user/profile-by-email',
+        `${VITE_BACKEND_URL}/api/user/profile-by-email`,
         { email: user.email },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -533,7 +535,7 @@ const BusinessUserProfile = () => {
 
   const fetchBusinesses = async (userId) => {
     try {
-      const response = await axios.get(`http://localhost:5555/api/businesses/user/${userId}`);
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/businesses/user/${userId}`);
       if (response.data.success) {
         setBusinesses(response.data.businesses);
       }
@@ -545,7 +547,7 @@ const BusinessUserProfile = () => {
 
   const fetchOffers = async (userId) => {
     try {
-      const response = await axios.get(`http://localhost:5555/api/offers/user/${userId}`);
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/offers/user/${userId}`);
       if (response.data.success) {
         setOffers(response.data.offers);
       }
@@ -560,7 +562,7 @@ const BusinessUserProfile = () => {
     try {
       console.log('Fetching subscription for userId:', userId);
 
-      const response = await axios.post('http://localhost:5555/api/user/check-subscription-with-renewal', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/user/check-subscription-with-renewal`, {
         userId: userId,
         email: user.email
       });
@@ -658,7 +660,7 @@ const BusinessUserProfile = () => {
 
   const fetchNotifications = async (userId) => {
     try {
-      const response = await axios.get(`http://localhost:5555/api/notifications/user/${userId}`);
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/notifications/user/${userId}`);
       if (response.data.success) {
         setNotifications(response.data.notifications);
       }
@@ -700,7 +702,7 @@ const BusinessUserProfile = () => {
     try {
       updateSubmissionState('deletingItems', true);
 
-      const response = await axios.post('http://localhost:5555/api/user/delete-selected-items', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/user/delete-selected-items`, {
         userId: userDetails.userId,
         businessIds: selectedBusinessesToDelete,
         offerIds: selectedOffersToDelete
@@ -771,7 +773,7 @@ const BusinessUserProfile = () => {
   const handleProfileUpdate = async () => {
     try {
       const response = await axios.put(
-        `http://localhost:5555/api/auth/users/${userDetails._id}`,
+        `${VITE_BACKEND_URL}/api/auth/users/${userDetails._id}`,
         profileForm
       );
 
@@ -789,7 +791,7 @@ const BusinessUserProfile = () => {
   const handleDeleteAccount = async () => {
     try {
       const response = await axios.delete(
-        `http://localhost:5555/api/auth/users/${userDetails._id}`
+        `${VITE_BACKEND_URL}/api/auth/users/${userDetails._id}`
       );
 
       if (response.data.success) {
@@ -825,7 +827,7 @@ const BusinessUserProfile = () => {
 
       if (editingBusiness) {
         const response = await axios.put(
-          `http://localhost:5555/api/businesses/${editingBusiness._id}`,
+          `${VITE_BACKEND_URL}/api/businesses/${editingBusiness._id}`,
           { ...businessForm, userId: userDetails.userId }
         );
         if (response.data.success) {
@@ -841,7 +843,7 @@ const BusinessUserProfile = () => {
         }
 
         const response = await axios.post(
-          'http://localhost:5555/api/businesses',
+          `${VITE_BACKEND_URL}/api/businesses`,
           { ...businessForm, userId: userDetails.userId }
         );
 
@@ -928,7 +930,7 @@ const handleOfferSubmit = async () => {
       formData.append('requiresReapproval', true);
 
       const response = await axios.put(
-        `http://localhost:5555/api/offers/${editingOffer._id}`,
+        `${VITE_BACKEND_URL}/api/offers/${editingOffer._id}`,
         formData,
         {
           headers: {
@@ -963,7 +965,7 @@ const handleOfferSubmit = async () => {
       }
 
       const response = await axios.post(
-        'http://localhost:5555/api/offers',
+        `${VITE_BACKEND_URL}/api/offers`,
         formData,
         {
           headers: {
@@ -1014,7 +1016,7 @@ const handleOfferSubmit = async () => {
       const today = new Date();
 
       if (startDate <= today) {
-        await axios.post('http://localhost:5555/api/businesses/send-offer-notification', {
+        await axios.post(`${VITE_BACKEND_URL}/api/businesses/send-offer-notification`, {
           userEmail: userDetails.email,
           userName: `${userDetails.firstName} ${userDetails.lastName}`,
           businessName: business?.name || 'Your Business',
@@ -1043,7 +1045,7 @@ const handleOfferSubmit = async () => {
     try {
       updateSubmissionState('deletingBusiness', true);
 
-      const response = await axios.delete(`http://localhost:5555/api/businesses/${businessId}`);
+      const response = await axios.delete(`${VITE_BACKEND_URL}/api/businesses/${businessId}`);
       if (response.data.success) {
         await fetchBusinesses(userDetails.userId);
         await fetchOffers(userDetails.userId); // Refresh offers as they might be deleted too
@@ -1071,7 +1073,7 @@ const handleDeleteOffer = async (offerId) => {
   try {
     updateSubmissionState('deletingOffer', true);
 
-    const response = await axios.delete(`http://localhost:5555/api/offers/${offerId}`);
+    const response = await axios.delete(`${VITE_BACKEND_URL}/api/offers/${offerId}`);
     if (response.data.success) {
       // ✅ CRITICAL FIX: Refresh offers immediately after deletion
       await fetchOffers(userDetails.userId);
@@ -1088,7 +1090,7 @@ const handleDeleteOffer = async (offerId) => {
  const toggleOfferStatus = async (offerId, currentStatus) => {
   try {
     const response = await axios.patch(
-      `http://localhost:5555/api/offers/${offerId}/toggle-status`,
+      `${VITE_BACKEND_URL}/api/offers/${offerId}/toggle-status`,
       { isActive: !currentStatus }
     );
     if (response.data.success) {

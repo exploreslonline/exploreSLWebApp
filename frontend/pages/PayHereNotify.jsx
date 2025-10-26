@@ -7,7 +7,7 @@ const PayHereNotify = () => {
   const navigate = useNavigate();
   const [status, setStatus] = useState('processing');
   const [message, setMessage] = useState('Processing payment notification...');
-
+const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   useEffect(() => {
     const processNotification = async () => {
       try {
@@ -36,7 +36,7 @@ const PayHereNotify = () => {
         }
 
         // Send notification data to backend for processing
-        const response = await fetch('http://localhost:5555/payhere-notify', {
+        const response = await fetch(`${VITE_BACKEND_URL}/payhere-notify`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',

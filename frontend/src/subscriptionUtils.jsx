@@ -1,6 +1,6 @@
 // Enhanced subscriptionUtils with plan limit enforcement and fixed downgrade functions
 import axios from 'axios';
-
+const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
 export const subscriptionUtils = {
   // ==================== NEW PLAN LIMIT ENFORCEMENT FUNCTIONS ====================
 
@@ -9,7 +9,7 @@ export const subscriptionUtils = {
     try {
       console.log('Checking plan limits for userId:', userId);
       
-      const response = await axios.get(`http://localhost:5555/api/user/${userId}/plan-limits`);
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/user/${userId}/plan-limits`);
       
       if (response.data.success) {
         return response.data.planLimits;
@@ -27,7 +27,7 @@ export const subscriptionUtils = {
     try {
       console.log('Enforcing plan limits for userId:', userId);
       
-      const response = await axios.post(`http://localhost:5555/api/user/${userId}/enforce-plan-limits`, {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/user/${userId}/enforce-plan-limits`, {
         selectedBusinesses,
         selectedOffers
       });
@@ -44,7 +44,7 @@ export const subscriptionUtils = {
     try {
       console.log('Reactivating suspended items for userId:', userId);
       
-      const response = await axios.post(`http://localhost:5555/api/user/${userId}/reactivate-suspended-items`);
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/user/${userId}/reactivate-suspended-items`);
       
       return response.data;
     } catch (error) {
@@ -83,7 +83,7 @@ export const subscriptionUtils = {
   // Check if downgrade will cause plan limit issues
   checkDowngradeImpact: async (userId) => {
     try {
-      const response = await axios.get(`http://localhost:5555/api/subscription/downgrade-impact/${userId}`);
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/subscription/downgrade-impact/${userId}`);
       return response.data;
     } catch (error) {
       console.error('Error checking downgrade impact:', error);
@@ -96,7 +96,7 @@ export const subscriptionUtils = {
     try {
       console.log('Checking subscription with limits for:', userEmail, 'userId:', userId);
 
-      const response = await axios.post('http://localhost:5555/api/user/check-subscription-with-renewal', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/user/check-subscription-with-renewal`, {
         email: userEmail,
         userId: userId
       });
@@ -164,7 +164,7 @@ export const subscriptionUtils = {
     // Option 3: Suspend items (alternative to deletion)
     suspendSelectedItems: async (userId, selectedBusinesses, selectedOffers) => {
       try {
-        const response = await axios.post(`http://localhost:5555/api/user/${userId}/suspend-items`, {
+        const response = await axios.post(`${VITE_BACKEND_URL}/api/user/${userId}/suspend-items`, {
           selectedBusinesses,
           selectedOffers,
           reason: 'User-initiated suspension due to plan limits'
@@ -301,58 +301,72 @@ export const subscriptionUtils = {
 
   // ==================== ENHANCED EXISTING FUNCTIONS ====================
 
-  // Check if a user has an active subscription
-  checkUserSubscription: async (userEmail, userId) => {
-    try {
-      console.log('Checking subscription for:', userEmail, 'userId:', userId);
+checkUserSubscription: async (userEmail, userId) => {
+  try {
+    console.log('Checking subscription for:', userEmail, 'userId:', userId);
 
-      const response = await axios.post('http://localhost:5555/api/user/check-subscription-with-renewal', {
-        email: userEmail,
-        userId: userId
-      });
+    const response = await axios.post(`${VITE_BACKEND_URL}/api/user/check-subscription-with-renewal`, {
+      email: userEmail,
+      userId: userId
+    });
 
-      console.log('Subscription check response:', response.data);
+    console.log('Subscription check response:', response.data);
 
-      if (response.data.success) {
-        return {
-          hasSubscription: response.data.hasSubscription || false,
-          hasActiveSubscription: response.data.hasActiveSubscription || false,
-          isPremiumUser: response.data.isPremiumUser || false,
-          isFreeUser: response.data.isFreeUser || false,
-          isNonActivated: response.data.isNonActivated || false,
-          userExists: response.data.userExists || true,
-          subscription: response.data.subscription || null,
-          autoRenewal: response.data.autoRenewal || null,
-          renewalWarning: response.data.renewalWarning || false,
-          paymentFailure: response.data.paymentFailure || false
-        };
-      }
+    if (response.data.success) {
+      const subscription = response.data.subscription;
+      
+      // FIXED: Properly determine if subscription is active
+      const isActive = subscription && 
+                      subscription.status === 'active' && 
+                      (!subscription.endDate || new Date(subscription.endDate) > new Date());
+      
+      const isExpired = subscription && 
+                       (subscription.status === 'expired' || 
+                        (subscription.endDate && new Date(subscription.endDate) <= new Date()));
 
       return {
-        hasSubscription: false,
-        hasActiveSubscription: false,
-        isPremiumUser: false,
-        isFreeUser: false,
-        isNonActivated: true,
-        userExists: true,
-        subscription: null,
-        paymentFailure: false
-      };
-
-    } catch (error) {
-      console.error('Error checking subscription:', error);
-      return {
-        hasSubscription: false,
-        hasActiveSubscription: false,
-        isPremiumUser: false,
-        isFreeUser: false,
-        isNonActivated: true,
-        userExists: true,
-        subscription: null,
-        paymentFailure: false
+        hasSubscription: response.data.hasSubscription || false,
+        hasActiveSubscription: isActive,
+        isPremiumUser: isActive && subscription.planId === '2',
+        isFreeUser: isActive && subscription.planId === '1',
+        isExpired: isExpired,
+        isNonActivated: !subscription,
+        userExists: response.data.userExists || true,
+        subscription: subscription || null,
+        autoRenewal: response.data.autoRenewal || null,
+        renewalWarning: response.data.renewalWarning || false,
+        paymentFailure: response.data.paymentFailure || false
       };
     }
-  },
+
+    return {
+      hasSubscription: false,
+      hasActiveSubscription: false,
+      isPremiumUser: false,
+      isFreeUser: false,
+      isExpired: false,
+      isNonActivated: true,
+      userExists: true,
+      subscription: null,
+      paymentFailure: false
+    };
+
+  } catch (error) {
+    console.error('Error checking subscription:', error);
+    return {
+      hasSubscription: false,
+      hasActiveSubscription: false,
+      isPremiumUser: false,
+      isFreeUser: false,
+      isExpired: false,
+      isNonActivated: true,
+      userExists: true,
+      subscription: null,
+      paymentFailure: false
+    };
+  }
+},
+
 
   // Get subscription limits based on plan
   getSubscriptionLimits: (subscription) => {
@@ -432,7 +446,7 @@ export const subscriptionUtils = {
   // Get downgrade impact for premium users
   getDowngradeImpact: async (userId) => {
     try {
-      const response = await axios.get(`http://localhost:5555/api/subscription/downgrade-impact/${userId}`);
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/subscription/downgrade-impact/${userId}`);
       return response.data;
     } catch (error) {
       console.error('Error getting downgrade impact:', error);
@@ -443,7 +457,7 @@ export const subscriptionUtils = {
   // Get downgrade details
   getDowngradeDetails: async (userId) => {
     try {
-      const response = await axios.get(`http://localhost:5555/api/subscription/downgrade-details/${userId}`);
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/subscription/downgrade-details/${userId}`);
       return response.data;
     } catch (error) {
       console.error('Error getting downgrade details:', error);
@@ -456,7 +470,7 @@ export const subscriptionUtils = {
     try {
       console.log('Scheduling downgrade for userId:', userId);
       
-      const response = await axios.post('http://localhost:5555/api/subscription/schedule-downgrade', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/subscription/schedule-downgrade`, {
         userId,
         userEmail,
         reason,
@@ -502,7 +516,7 @@ export const subscriptionUtils = {
     try {
       console.log('Cancelling scheduled downgrade for userId:', userId);
       
-      const response = await axios.post('http://localhost:5555/api/subscription/cancel-scheduled-downgrade', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/subscription/cancel-scheduled-downgrade`, {
         userId: parseInt(userId)
       });
       
@@ -528,7 +542,7 @@ export const subscriptionUtils = {
     try {
       console.log('Cancelling auto-renewal for userId:', userId);
       
-      const response = await axios.post('http://localhost:5555/api/subscription/cancel-auto-renewal', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/subscription/cancel-auto-renewal`, {
         userId,
         userEmail,
         reason: reason || 'User requested auto-renewal cancellation'
@@ -568,7 +582,7 @@ export const subscriptionUtils = {
     try {
       console.log('Reactivating auto-renewal for userId:', userId);
       
-      const response = await axios.post('http://localhost:5555/api/subscription/reactivate-auto-renewal', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/subscription/reactivate-auto-renewal`, {
         userId,
         userEmail
       });
@@ -606,7 +620,7 @@ export const subscriptionUtils = {
   createSubscriptionRecord: async (subscriptionData) => {
     try {
       console.log('Creating subscription record:', subscriptionData);
-      const response = await axios.post('http://localhost:5555/create-subscription-record', subscriptionData);
+      const response = await axios.post(`${VITE_BACKEND_URL}/create-subscription-record`, subscriptionData);
       console.log('Subscription record created:', response.data);
       return response.data;
     } catch (error) {
@@ -618,7 +632,7 @@ export const subscriptionUtils = {
   // Get subscription plans
   getSubscriptionPlans: async () => {
     try {
-      const response = await axios.get('http://localhost:5555/plans');
+      const response = await axios.get(`${VITE_BACKEND_URL}/plans`);
       return response.data.plans || [];
     } catch (error) {
       console.error('Error fetching plans:', error);
@@ -673,7 +687,7 @@ export const subscriptionUtils = {
       }
 
       // Make API call with timeout
-      const response = await axios.post('http://localhost:5555/create-payhere-payment', enhancedPaymentData, {
+      const response = await axios.post(`${VITE_BACKEND_URL}/create-payhere-payment`, enhancedPaymentData, {
         timeout: 30000,
         headers: {
           'Content-Type': 'application/json',
@@ -733,7 +747,7 @@ export const subscriptionUtils = {
   // Process automatic renewal payment
   processAutomaticRenewal: async (subscriptionId, userId) => {
     try {
-      const response = await axios.post('http://localhost:5555/api/subscription/process-renewal', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/subscription/process-renewal`, {
         subscriptionId,
         userId
       });
@@ -747,7 +761,7 @@ export const subscriptionUtils = {
   // Handle payment failure
   handlePaymentFailure: async (userId, subscriptionId, failureReason) => {
     try {
-      const response = await axios.post('http://localhost:5555/api/subscription/payment-failure', {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/subscription/payment-failure`, {
         userId,
         subscriptionId,
         failureReason
@@ -762,7 +776,7 @@ export const subscriptionUtils = {
   // Check for payment failures and send notifications
   checkPaymentFailures: async () => {
     try {
-      const response = await axios.get('http://localhost:5555/api/subscription/check-payment-failures');
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/subscription/check-payment-failures`);
       return response.data;
     } catch (error) {
       console.error('Error checking payment failures:', error);
@@ -804,31 +818,52 @@ export const subscriptionUtils = {
     return daysLeft <= 7 && daysLeft > 0;
   },
 
-  // Create free subscription
-  createFreeSubscription: async (userData) => {
-    try {
-      console.log('Creating free subscription for user:', userData.email);
-      
-      const response = await axios.post('http://localhost:5555/create-free-subscription', {
-        customerData: {
-          userId: userData.userId || userData._id,
-          email: userData.email,
-          name: `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || 'User'
-        }
-      });
-
-      if (response.data.success) {
-        console.log('Free subscription created successfully');
-        return response.data;
-      } else {
-        console.error('Failed to create free subscription:', response.data.error);
-        return { success: false, error: response.data.error };
+createFreeSubscription: async (userData) => {
+  try {
+    console.log('Creating free subscription for user:', userData.email);
+    
+    const response = await axios.post(`${VITE_BACKEND_URL}/api/subscription/create-free-subscription`, {
+      customerData: {
+        userId: userData.userId || userData._id,
+        email: userData.email,
+        name: `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || userData.name || 'User',
+        phoneNumber: userData.phone || userData.phoneNumber || '0771234567'
       }
-    } catch (error) {
-      console.error('Error creating free subscription:', error);
-      return { success: false, error: error.message };
+    });
+
+    if (response.data.success) {
+      console.log('Free subscription created/reactivated successfully');
+      return response.data;
+    } else {
+      console.error('Failed to create free subscription:', response.data.error);
+      return { success: false, error: response.data.error };
     }
-  },
+  } catch (error) {
+    console.error('Error creating free subscription:', error);
+    
+    // FIXED: Better error handling for expired users
+    if (error.response && error.response.status === 400) {
+      return { 
+        success: false, 
+        error: error.response.data.error || 'Cannot create free subscription'
+      };
+    }
+    
+    return { success: false, error: error.message };
+  }
+},
+canActivateFreePlan: (subscription) => {
+  // Allow Free plan activation if:
+  // 1. No subscription exists
+  // 2. Subscription is expired
+  // 3. Subscription is cancelled
+  // 4. Subscription is inactive
+  if (!subscription) return true;
+  
+  return subscription.status === 'expired' || 
+         subscription.status === 'cancelled' || 
+         subscription.status === 'inactive';
+},
 
   // Get user type string for display
   getUserTypeString: (subscription) => {
@@ -1019,7 +1054,7 @@ export const subscriptionUtils = {
   // Check PayHere payment status
   checkPaymentStatus: async (orderId) => {
     try {
-      const response = await axios.get(`http://localhost:5555/payhere-status/${orderId}`);
+      const response = await axios.get(`${VITE_BACKEND_URL}/payhere-status/${orderId}`);
       return response.data;
     } catch (error) {
       console.error('Error checking payment status:', error);
@@ -1087,11 +1122,19 @@ export const subscriptionUtils = {
     }
   },
 
-  // Check if subscription has expired
-  isSubscriptionExpired: (subscription) => {
-    if (!subscription || !subscription.endDate) return false;
-    return new Date(subscription.endDate) < new Date();
-  },
+isSubscriptionExpired: (subscription) => {
+  if (!subscription) return false;
+  
+  // Check status first
+  if (subscription.status === 'expired') return true;
+  
+  // Check end date
+  if (subscription.endDate) {
+    return new Date(subscription.endDate) <= new Date();
+  }
+  
+  return false;
+},
 
   // Get subscription status color for UI
   getSubscriptionStatusColor: (subscription) => {
@@ -1182,7 +1225,7 @@ export const subscriptionUtils = {
   // Log subscription activity
   logActivity: async (userId, activity, details = {}) => {
     try {
-      await axios.post('http://localhost:5555/api/subscription/log-activity', {
+      await axios.post(`${VITE_BACKEND_URL}/api/subscription/log-activity`, {
         userId,
         activity,
         details,

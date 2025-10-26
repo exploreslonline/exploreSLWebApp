@@ -8,6 +8,9 @@ function SubscriptionPage() {
   const { user, isAuthLoading } = useContext(AuthContext);
   const navigate = useNavigate();
 
+
+
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -115,13 +118,12 @@ function SubscriptionPage() {
     }
   };
 
-  // Helper function to check if subscription is expired
-  const isSubscriptionExpired = (subscription) => {
-    if (!subscription || !subscription.endDate) return false;
-    const now = new Date();
-    const endDate = new Date(subscription.endDate);
-    return now > endDate;
-  };
+const isSubscriptionExpired = (subscription) => {
+  if (!subscription || !subscription.endDate) return false;
+  const now = new Date();
+  const endDate = new Date(subscription.endDate);
+  return now > endDate || subscription.status === 'expired';
+};
 
   // Enhanced helper function to check if user is premium with active subscription
   const isPremiumWithActiveSubscription = () => {
@@ -149,52 +151,64 @@ function SubscriptionPage() {
   };
 
   // Helper function to check if plan should be disabled
-  const isPlanDisabled = (planId) => {
-    // If user has active premium subscription (including grace period), they shouldn't access this page
-    if (isPremiumWithActiveSubscription() && !isInGracePeriod) {
+const isPlanDisabled = (planId) => {
+  // If user has active premium subscription (not expired), disable both plans
+  if (isPremiumWithActiveSubscription() && !isInGracePeriod) {
+    return true;
+  }
+
+  // FIXED: Allow Free plan for expired users
+  if (planId === 1) {
+    // Only disable Free plan if user already has an ACTIVE free subscription
+    if (isFreeUser() && hasActiveSubscription && userSubscription.status === 'active') {
       return true;
     }
-
-    // If user already has free plan, disable free plan selection
-    if (planId === 1 && isFreeUser() && hasActiveSubscription) {
-      return true;
-    }
-
+    // Allow Free plan for expired/cancelled users
     return false;
-  };
+  }
+
+  return false;
+};
 
   // Helper function to get plan disabled message
-  const getPlanDisabledMessage = (planId) => {
-    if (isPremiumWithActiveSubscription() && !isInGracePeriod) {
-      return "You already have the Premium plan - the best package available!";
-    }
+const getPlanDisabledMessage = (planId) => {
+  if (isPremiumWithActiveSubscription() && !isInGracePeriod) {
+    return "You already have the Premium plan - the best package available!";
+  }
 
-    if (planId === 1 && isFreeUser() && hasActiveSubscription) {
+  if (planId === 1) {
+    // Only show disabled message if user has ACTIVE free subscription
+    if (isFreeUser() && hasActiveSubscription && userSubscription.status === 'active') {
       return "You already have the Free plan activated. Upgrade to Premium for more features!";
     }
+  }
 
-    return "";
-  };
+  return "";
+};
 
-  const getAvailablePlans = () => {
-    // If user is in grace period, they can renew premium
-    if (isInGracePeriod) {
-      return plans.filter(plan => plan.id !== 1); // Remove free plan, allow premium renewal
-    }
+const getAvailablePlans = () => {
+  // If user is in grace period, allow renewal
+  if (isInGracePeriod) {
+    return plans.filter(plan => plan.id !== 1);
+  }
 
-    // If user is already on free plan, only show premium plan
-    if (isFreeUser() && hasActiveSubscription) {
-      return plans.filter(plan => plan.id !== 1);
-    }
+  // FIXED: For expired users, show ALL plans
+  if (userSubscription && userSubscription.status === 'expired') {
+    return plans; // Show both Free and Premium
+  }
 
-    // For premium users with expired subscription, show only premium plan
-    if (hasExpiredPremium()) {
-      return plans.filter(plan => plan.id !== 1);
-    }
+  // If user has active free plan, only show premium
+  if (isFreeUser() && hasActiveSubscription && userSubscription.status === 'active') {
+    return plans.filter(plan => plan.id !== 1);
+  }
 
-    // For new users (non-activated), show all plans
-    return plans;
-  };
+  // For expired premium or new users, show all plans
+  if (hasExpiredPremium() || !hasActiveSubscription) {
+    return plans; // Show both plans
+  }
+
+  return plans;
+};
 
   // Pre-fill user data if available
   useEffect(() => {
@@ -355,7 +369,7 @@ function SubscriptionPage() {
     try {
       console.log('Creating subscription record...');
 
-      const response = await fetch('http://localhost:5555/api/subscription/create-subscription-record', {
+      const response = await fetch(`${VITE_BACKEND_URL}/api/subscription/create-subscription-record`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -429,7 +443,7 @@ function SubscriptionPage() {
       console.log('Sending payment request to backend...');
 
       // Always use recurring payment for premium plans
-      const endpoint = 'http://localhost:5555/create-payhere-recurring-payment';
+      const endpoint = `${VITE_BACKEND_URL}/create-payhere-recurring-payment`;
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -509,7 +523,7 @@ function SubscriptionPage() {
 
       console.log('Creating free subscription...');
 
-      const response = await fetch('http://localhost:5555/api/subscription/create-free-subscription', {
+      const response = await fetch(`${VITE_BACKEND_URL}/api/subscription/create-free-subscription`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -667,34 +681,37 @@ function SubscriptionPage() {
     );
   }
 
-  // Get button text
-  const getButtonText = () => {
-    if (isProcessing) {
-      if (paymentStatus === 'processing') return 'Processing...';
-      if (paymentStatus === 'redirecting') return 'Redirecting to PayHere...';
-      return 'Processing...';
+const getButtonText = () => {
+  if (isProcessing) {
+    if (paymentStatus === 'processing') return 'Processing...';
+    if (paymentStatus === 'redirecting') return 'Redirecting to PayHere...';
+    return 'Processing...';
+  }
+
+  const selectedPlan = plans.find(plan => plan.id === parseInt(formData.selectedPlan));
+  if (!selectedPlan) return 'Select a Plan';
+
+  // Free plan button text
+  if (selectedPlan.id === 1) {
+    // Check if user has active free plan
+    if (isFreeUser() && hasActiveSubscription && userSubscription.status === 'active') {
+      return 'Already Activated';
     }
+    // For expired or new users
+    return 'Activate Free Plan';
+  }
 
-    const selectedPlan = plans.find(plan => plan.id === parseInt(formData.selectedPlan));
-    if (!selectedPlan) return 'Select a Plan';
+  // Premium plan button text
+  if (userSubscription && userSubscription.status === 'expired') {
+    return 'Renew Premium (Auto-Renewal)';
+  }
 
-    if (selectedPlan.id === 1) {
-      if (isFreeUser() && hasActiveSubscription) {
-        return 'Already Activated';
-      }
-      return 'Activate Free Plan';
-    }
+  if (isInGracePeriod) {
+    return 'Reactivate Premium (Auto-Renewal)';
+  }
 
-    if (hasExpiredPremium()) {
-      return 'Renew Premium (Auto-Renewal)';
-    }
-
-    if (isInGracePeriod) {
-      return 'Reactivate Premium (Auto-Renewal)';
-    }
-
-    return 'Upgrade to Premium (Auto-Renewal)';
-  };
+  return 'Upgrade to Premium (Auto-Renewal)';
+};
 
   // Get status alert
   const getStatusAlert = () => {
@@ -806,64 +823,66 @@ function SubscriptionPage() {
     return null;
   };
 
-  // Enhanced subscription status banner
-  const getSubscriptionStatusBanner = () => {
-    if (!userSubscription) return null;
+const getSubscriptionStatusBanner = () => {
+  if (!userSubscription) return null;
 
-    // Grace period banner (highest priority)
-    if (isInGracePeriod && cancellationInfo) {
-      const daysRemaining = cancellationInfo.daysRemaining || 0;
-      return (
-        <div style={{
-          backgroundColor: '#fff3cd',
-          border: '1px solid #ffeaa7',
-          color: '#856404',
-          padding: '15px',
-          borderRadius: '8px',
-          margin: '20px',
-          textAlign: 'center'
-        }}>
-          <strong>⏰ Subscription Ending Soon:</strong> Your premium features will end in {daysRemaining} day{daysRemaining !== 1 ? 's' : ''} 
-          ({new Date(cancellationInfo.effectiveDate).toLocaleDateString()}). 
-          You can reactivate your subscription below with auto-renewal to continue enjoying premium features!
-        </div>
-      );
-    }
+  // Grace period banner (highest priority)
+  if (isInGracePeriod && cancellationInfo) {
+    const daysRemaining = cancellationInfo.daysRemaining || 0;
+    return (
+      <div style={{
+        backgroundColor: '#fff3cd',
+        border: '1px solid #ffeaa7',
+        color: '#856404',
+        padding: '15px',
+        borderRadius: '8px',
+        margin: '20px',
+        textAlign: 'center'
+      }}>
+        <strong>⏰ Subscription Ending Soon:</strong> Your premium features will end in {daysRemaining} day{daysRemaining !== 1 ? 's' : ''} 
+        ({new Date(cancellationInfo.effectiveDate).toLocaleDateString()}). 
+        You can reactivate your subscription below with auto-renewal to continue enjoying premium features!
+      </div>
+    );
+  }
 
-    if (isFreeUser()) {
-      return (
-        <div style={{
-          backgroundColor: '#e3f2fd',
-          border: '1px solid #90caf9',
-          color: '#1565c0',
-          padding: '15px',
-          borderRadius: '8px',
-          margin: '20px',
-          textAlign: 'center'
-        }}>
-          <strong>Current Status:</strong> You have a Free plan. Upgrade to Premium with auto-renewal to unlock more features!
-        </div>
-      );
-    }
+  // FIXED: Expired subscription banner
+  if (userSubscription.status === 'expired') {
+    return (
+      <div style={{
+        backgroundColor: '#f8d7da',
+        border: '1px solid #f5c6cb',
+        color: '#721c24',
+        padding: '15px',
+        borderRadius: '8px',
+        margin: '20px',
+        textAlign: 'center'
+      }}>
+        <strong>⚠️ Subscription Expired:</strong> Your subscription has expired. 
+        Please activate a Free plan or upgrade to Premium to continue using our services.
+      </div>
+    );
+  }
 
-    if (hasExpiredPremium()) {
-      return (
-        <div style={{
-          backgroundColor: '#fff3cd',
-          border: '1px solid #ffeaa7',
-          color: '#856404',
-          padding: '15px',
-          borderRadius: '8px',
-          margin: '20px',
-          textAlign: 'center'
-        }}>
-          <strong>Subscription Expired:</strong> Your Premium subscription has expired. Renew now with auto-renewal to continue enjoying premium features!
-        </div>
-      );
-    }
+  // Active free user banner
+  if (isFreeUser() && userSubscription.status === 'active') {
+    return (
+      <div style={{
+        backgroundColor: '#e3f2fd',
+        border: '1px solid #90caf9',
+        color: '#1565c0',
+        padding: '15px',
+        borderRadius: '8px',
+        margin: '20px',
+        textAlign: 'center'
+      }}>
+        <strong>Current Status:</strong> You have a Free plan. Upgrade to Premium with auto-renewal to unlock more features!
+      </div>
+    );
+  }
 
-    return null;
-  };
+  return null;
+};
 
   const styles = {
     app: {

@@ -16,7 +16,7 @@ function PaymentSuccess() {
   const [subscription, setSubscription] = useState(null);
   const [error, setError] = useState('');
   const [retryCount, setRetryCount] = useState(0);
-
+const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   // Verify payment status
 // In PaymentSuccess.js - enhance the verification logic
 useEffect(() => {
@@ -29,7 +29,7 @@ useEffect(() => {
     try {
       console.log('Verifying payment status for order:', orderId);
       
-      const response = await fetch(`http://localhost:5555/check-payment-status/${orderId}`);
+      const response = await fetch(`${VITE_BACKEND_URL}/check-payment-status/${orderId}`);
       const data = await response.json();
       
       if (data.success) {

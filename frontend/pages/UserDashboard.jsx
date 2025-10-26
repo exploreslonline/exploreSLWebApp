@@ -15,6 +15,9 @@ const UserDashboard = () => {
   const [editMode, setEditMode] = useState(false); 
   const navigate = useNavigate();
 
+
+
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   useEffect(() => {
     const storedEmail = localStorage.getItem("userEmail");
 
@@ -30,7 +33,7 @@ const UserDashboard = () => {
   }, []);
 
   const fetchContactUsDetails = (storedEmail) => {
-    Axios.get('http://localhost:5555/contact')
+    Axios.get(`${VITE_BACKEND_URL}/contact`)
       .then((response) => {
         const userContactForms = response.data.filter((contact) => contact.email === storedEmail);
         setContactList(userContactForms);
@@ -42,7 +45,7 @@ const UserDashboard = () => {
 
   const fetchFeedbacks = (storedEmail) => {
     setLoading(true);
-    Axios.get('http://localhost:5555/feedback')
+    Axios.get(`${VITE_BACKEND_URL}/feedback`)
       .then((response) => {
         const userFeedbacks = response.data.filter((feedback) => feedback.email === storedEmail);
         setFeedbackList(userFeedbacks);
@@ -56,7 +59,7 @@ const UserDashboard = () => {
 
   const fetchPayments = (storedEmail) => {
     setLoading(true);
-    Axios.get('http://localhost:5555/payment')
+    Axios.get(`${VITE_BACKEND_URL}/payment`)
       .then((response) => {
         const userPayments = response.data.filter((payment) => payment.email === storedEmail);
         setPaymentList(userPayments);
@@ -71,7 +74,7 @@ const UserDashboard = () => {
   const handleDeleteContact = async (id) => {
     if (window.confirm("Are you sure you want to delete this contact?")) {
       try {
-        const response = await Axios.delete(`http://localhost:5555/contact/${id}`);
+        const response = await Axios.delete(`${VITE_BACKEND_URL}/contact/${id}`);
         if (response.status === 200) {
           setContactList(contactusList.filter((contact) => contact._id !== id));
         } else {
@@ -86,7 +89,7 @@ const UserDashboard = () => {
   const handleDeleteFeedback = async (id) => {
     if (window.confirm("Are you sure you want to delete this feedback?")) {
       try {
-        const response = await Axios.delete(`http://localhost:5555/feedback/${id}`);
+        const response = await Axios.delete(`${VITE_BACKEND_URL}/feedback/${id}`);
         if (response.status === 200) {
           setFeedbackList(feedbackList.filter((feedback) => feedback._id !== id));
         } else {
@@ -101,7 +104,7 @@ const UserDashboard = () => {
   const handleDeletePayment = async (id) => {
     if (window.confirm("Are you sure you want to delete this payment?")) {
       try {
-        const response = await Axios.delete(`http://localhost:5555/payment/${id}`);
+        const response = await Axios.delete(`${VITE_BACKEND_URL}/payment/${id}`);
         if (response.status === 200) {
           setPaymentList(paymentList.filter((payment) => payment._id !== id));
         } else {
@@ -130,7 +133,7 @@ const UserDashboard = () => {
 
   const handleUpdateContact = async () => {
     try {
-      const response = await Axios.put(`http://localhost:5555/contact/${contactEditData._id}`, contactEditData);
+      const response = await Axios.put(`${VITE_BACKEND_URL}/contact/${contactEditData._id}`, contactEditData);
       if (response.status === 200) {
         setContactList(contactusList.map((contact) => (contact._id === contactEditData._id ? contactEditData : contact)));
         setEditMode(false);
@@ -143,7 +146,7 @@ const UserDashboard = () => {
 
   const handleUpdateFeedback = async () => {
     try {
-      const response = await Axios.put(`http://localhost:5555/feedback/${feedbackEditData._id}`, feedbackEditData);
+      const response = await Axios.put(`${VITE_BACKEND_URL}/feedback/${feedbackEditData._id}`, feedbackEditData);
       if (response.status === 200) {
         setFeedbackList(feedbackList.map((feedback) => (feedback._id === feedbackEditData._id ? feedbackEditData : feedback)));
         setEditMode(false);
@@ -156,7 +159,7 @@ const UserDashboard = () => {
 
   const handleUpdatePayment = async () => {
     try {
-      const response = await Axios.put(`http://localhost:5555/payment/${paymentEditData._id}`, paymentEditData);
+      const response = await Axios.put(`${VITE_BACKEND_URL}/payment/${paymentEditData._id}`, paymentEditData);
       if (response.status === 200) {
         setPaymentList(paymentList.map((payment) => (payment._id === paymentEditData._id ? paymentEditData : payment)));
         setEditMode(false);

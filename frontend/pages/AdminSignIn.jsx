@@ -10,12 +10,18 @@ const AdminSignIn = () => {
   const navigate = useNavigate();
   const { setAdminUser } = useContext(AdminAuthContext);
 
+
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
+
+
+
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
 
     try {
-      const response = await axios.post("http://localhost:5555/api/admin/login", {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/admin/login`, {
         username,
         password,
       });

@@ -10,6 +10,237 @@ import crypto from 'crypto';
 import CryptoJS from 'crypto-js';
 import axios from 'axios';
 
+
+
+
+
+// In user_controller.js - FIXED recurring payment handlers
+
+export async function handleRecurringPaymentSuccess({ 
+  recurring_token, 
+  subscription_id, 
+  payment_id, 
+  amount, 
+  currency, 
+  next_occurrence_date,
+  email 
+}) {
+  try {
+    console.log('✅ Processing successful recurring payment');
+
+    // Find subscription by recurring token or subscription ID
+    const subscription = await Subscription.findOne({
+      $or: [
+        { payhereRecurringToken: recurring_token },
+        { payhereRecurringToken: subscription_id },
+        { userEmail: email?.toLowerCase().trim() }
+      ],
+      autoRenew: true,
+      status: { $in: ['active', 'pending_renewal'] }
+    }).sort({ createdAt: -1 });
+
+    if (!subscription) {
+      console.error('❌ Subscription not found for recurring payment');
+      return;
+    }
+
+    // CRITICAL FIX: Extend end date from CURRENT end date, not from today
+    const currentEndDate = new Date(subscription.endDate);
+    const newEndDate = new Date(currentEndDate);
+    
+    // Add one billing period
+    if (subscription.billingCycle === 'yearly') {
+      newEndDate.setFullYear(newEndDate.getFullYear() + 1);
+    } else {
+      newEndDate.setMonth(newEndDate.getMonth() + 1);
+    }
+
+    // Calculate next billing date
+    const nextBillingDate = next_occurrence_date ? 
+      new Date(next_occurrence_date) : 
+      new Date(newEndDate);
+
+    // Update subscription
+    await Subscription.updateOne(
+      { _id: subscription._id },
+      {
+        $set: {
+          endDate: newEndDate,
+          nextBillingDate: nextBillingDate,
+          status: 'active',
+          renewalAttempts: 0,
+          paymentFailure: false,
+          lastSuccessfulRenewal: new Date(),
+          updatedAt: new Date()
+        },
+        $push: {
+          renewalHistory: {
+            renewalDate: new Date(),
+            amount: parseFloat(amount),
+            status: 'success',
+            paymentId: payment_id,
+            attempt: 1,
+            previousEndDate: currentEndDate,
+            newEndDate: newEndDate
+          }
+        }
+      }
+    );
+
+    // Log successful renewal
+    await SubscriptionHistory.create({
+      userId: subscription.userId,
+      userEmail: subscription.userEmail,
+      action: 'renewal',
+      fromPlan: subscription.planName,
+      toPlan: subscription.planName,
+      amount: parseFloat(amount),
+      effectiveDate: new Date(),
+      notes: `Auto-renewal successful. Extended until ${newEndDate.toLocaleDateString()}. Next billing: ${nextBillingDate.toLocaleDateString()}`
+    });
+
+    console.log(`✅ Subscription ${subscription._id} renewed successfully`);
+    console.log(`   Previous end date: ${currentEndDate.toISOString()}`);
+    console.log(`   New end date: ${newEndDate.toISOString()}`);
+
+    // Send success email
+    const user = await User.findOne({ userId: subscription.userId });
+    if (user) {
+      await sendRenewalSuccessEmail(user, subscription, parseFloat(amount));
+    }
+
+    return { success: true, newEndDate, nextBillingDate };
+
+  } catch (error) {
+    console.error('❌ Error handling recurring payment success:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function handleRecurringPaymentFailure({ 
+  recurring_token, 
+  subscription_id, 
+  email, 
+  status_code,
+  failure_reason 
+}) {
+  try {
+    console.log('⚠️ Processing failed recurring payment');
+
+    const subscription = await Subscription.findOne({
+      $or: [
+        { payhereRecurringToken: recurring_token },
+        { payhereRecurringToken: subscription_id },
+        { userEmail: email?.toLowerCase().trim() }
+      ],
+      autoRenew: true
+    }).sort({ createdAt: -1 });
+
+    if (!subscription) {
+      console.error('❌ Subscription not found for failed payment');
+      return;
+    }
+
+    const attempts = (subscription.renewalAttempts || 0) + 1;
+    const maxAttempts = subscription.maxRenewalAttempts || 3;
+
+    // CRITICAL: Check if subscription should expire
+    const shouldExpire = attempts >= maxAttempts;
+    const newStatus = shouldExpire ? 'expired' : 'pending_renewal';
+
+    // Update subscription
+    await Subscription.updateOne(
+      { _id: subscription._id },
+      {
+        $set: {
+          renewalAttempts: attempts,
+          paymentFailure: true,
+          lastPaymentFailureDate: new Date(),
+          status: newStatus,
+          autoRenew: !shouldExpire, // Disable auto-renew if max attempts reached
+          updatedAt: new Date()
+        },
+        $push: {
+          renewalHistory: {
+            renewalDate: new Date(),
+            amount: subscription.amount,
+            status: 'failed',
+            failureReason: failure_reason || `Payment failed with status code: ${status_code}`,
+            attempt: attempts
+          }
+        }
+      }
+    );
+
+    // If max attempts reached, downgrade to free
+    if (shouldExpire) {
+      console.log(`❌ Max renewal attempts reached for subscription ${subscription._id}`);
+      
+      // Create free subscription
+      const freeSubscription = new Subscription({
+        userId: subscription.userId,
+        userEmail: subscription.userEmail,
+        planId: '1',
+        planName: 'Free Plan',
+        status: 'active',
+        billingCycle: 'monthly',
+        amount: 0,
+        currency: subscription.currency,
+        paymentMethod: 'auto_downgrade',
+        autoRenew: false,
+        startDate: new Date(),
+        endDate: null,
+        createdAt: new Date()
+      });
+      
+      await freeSubscription.save();
+      
+      // Apply free plan limitations
+      await applyFreePlanLimitations(subscription.userId);
+      
+      // Log downgrade
+      await SubscriptionHistory.create({
+        userId: subscription.userId,
+        userEmail: subscription.userEmail,
+        action: 'downgrade',
+        fromPlan: 'Premium Plan',
+        toPlan: 'Free Plan',
+        reason: `Auto-downgrade after ${maxAttempts} failed renewal attempts`,
+        effectiveDate: new Date()
+      });
+    }
+
+    // Log failure
+    await SubscriptionHistory.create({
+      userId: subscription.userId,
+      userEmail: subscription.userEmail,
+      action: shouldExpire ? 'expiry' : 'renewal',
+      fromPlan: subscription.planName,
+      toPlan: shouldExpire ? 'Free Plan' : subscription.planName,
+      reason: `Auto-renewal failed (attempt ${attempts}/${maxAttempts})`,
+      effectiveDate: new Date(),
+      notes: `Payment failure: ${status_code}`
+    });
+
+    console.log(`⚠️ Payment failed for subscription ${subscription._id} (attempt ${attempts}/${maxAttempts})`);
+
+    // Send appropriate email
+    const user = await User.findOne({ userId: subscription.userId });
+    if (user) {
+      if (shouldExpire) {
+        await sendSubscriptionExpiredEmail(user, subscription);
+      } else {
+        await sendRenewalFailedEmail(user, subscription, attempts);
+      }
+    }
+
+    return { success: false, attempts, shouldExpire };
+
+  } catch (error) {
+    console.error('❌ Error handling recurring payment failure:', error);
+    return { success: false, error: error.message };
+  }
+}
 export const createTransporter = () => nodemailer.createTransport({
   service: 'gmail',
   auth: {

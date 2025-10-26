@@ -8,10 +8,12 @@ const ResetPassword = () => {
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
 
+
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   const handleReset = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post(`http://localhost:5555/api/auth/reset-password/${token}`, { password });
+      const res = await axios.post(`${VITE_BACKEND_URL}/api/auth/reset-password/${token}`, { password });
       if (res.data.success) {
         setMessage('Password reset successful! Redirecting to login...');
         setTimeout(() => navigate('/signin'), 2000);

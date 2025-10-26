@@ -10,6 +10,10 @@ const AdminRegister = () => {
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
+
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
+
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -20,7 +24,7 @@ const AdminRegister = () => {
     }
 
     try {
-      const response = await axios.post("http://localhost:5555/api/admin/register", {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/admin/register`, {
         username,
         email,
         password,

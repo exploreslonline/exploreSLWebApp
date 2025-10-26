@@ -59,11 +59,18 @@ router.get('/free-subscription-users', async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
+    const { status } = req.query;
 
-    const freeSubscriptionsQuery = {
-      planId: '1',
-      status: { $in: ['active', 'inactive'] }
+    // FIXED: Better filter for free subscriptions
+    let freeSubscriptionsQuery = {
+      planId: '1'
     };
+
+    if (status && status !== 'all') {
+      freeSubscriptionsQuery.status = status;
+    } else {
+      freeSubscriptionsQuery.status = { $in: ['active', 'inactive', 'expired'] };
+    }
 
     const freeSubscriptions = await Subscription.find(freeSubscriptionsQuery)
       .sort({ createdAt: -1 })
@@ -82,6 +89,7 @@ router.get('/free-subscription-users', async (req, res) => {
         let offersData = [];
 
         if (subscription.userId) {
+          // FIXED: Enhanced user details query
           userDetails = await User.findOne({
             userId: parseInt(subscription.userId)
           }, {
@@ -90,41 +98,56 @@ router.get('/free-subscription-users', async (req, res) => {
             email: 1,
             businessName: 1,
             userType: 1,
+            phone: 1,
             createdAt: 1,
             lastLoginDate: 1
           }).lean();
 
+          // FIXED: Better count queries
           businessCount = await Business.countDocuments({
             userId: parseInt(subscription.userId),
-            status: { $ne: 'deleted' }
+            status: { $in: ['active', 'inactive'] } // Don't count deleted
           });
 
           offerCount = await Offer.countDocuments({
             userId: parseInt(subscription.userId),
-            status: { $ne: 'deleted' }
+            status: { $in: ['active', 'inactive'] } // Don't count deleted
           });
 
+          // Get business and offer details
           businessesData = await Business.find({
             userId: parseInt(subscription.userId),
-            status: { $ne: 'deleted' }
+            status: { $in: ['active', 'inactive', 'suspended'] }
           }, {
             name: 1,
             status: 1,
             createdAt: 1,
-            category: 1
+            category: 1,
+            phone: 1,
+            email: 1
           }).sort({ createdAt: -1 }).lean();
 
           offersData = await Offer.find({
             userId: parseInt(subscription.userId),
-            status: { $ne: 'deleted' }
+            status: { $in: ['active', 'inactive', 'suspended'] }
           }, {
             title: 1,
             status: 1,
             createdAt: 1,
             businessId: 1,
-            discountPercentage: 1
+            discount: 1,
+            adminStatus: 1
           }).sort({ createdAt: -1 }).lean();
         }
+
+        // FIXED: Better limit checking
+        const freeLimits = {
+          maxBusinesses: 1,
+          maxOffers: 3
+        };
+
+        const exceedsBusinessLimit = businessCount > freeLimits.maxBusinesses;
+        const exceedsOfferLimit = offerCount > freeLimits.maxOffers;
 
         return {
           ...subscription,
@@ -133,34 +156,37 @@ router.get('/free-subscription-users', async (req, res) => {
           offerCount,
           businessesData,
           offersData,
-          exceedsLimits: businessCount > 1 || offerCount > 3,
-          exceedsBusinessLimit: businessCount > 1,
-          exceedsOfferLimit: offerCount > 3,
-          freeLimits: {
-            maxBusinesses: 1,
-            maxOffers: 3
-          },
+          exceedsLimits: exceedsBusinessLimit || exceedsOfferLimit,
+          exceedsBusinessLimit,
+          exceedsOfferLimit,
+          freeLimits,
           usagePercentage: {
-            businesses: Math.min((businessCount / 1) * 100, 100),
-            offers: Math.min((offerCount / 3) * 100, 100)
-          }
+            businesses: Math.min((businessCount / freeLimits.maxBusinesses) * 100, 100),
+            offers: Math.min((offerCount / freeLimits.maxOffers) * 100, 100)
+          },
+          // FIXED: Add conversion potential score
+          conversionPotential: exceedsBusinessLimit || exceedsOfferLimit ? 'high' : 
+                              businessCount > 0 || offerCount > 0 ? 'medium' : 'low'
         };
       })
     );
 
+    // FIXED: Better statistics calculation
     const stats = {
       totalFreeUsers: totalFreeSubscriptions,
       activeFreeUsers: enrichedSubscriptions.filter(sub => sub.status === 'active').length,
       inactiveFreeUsers: enrichedSubscriptions.filter(sub => sub.status === 'inactive').length,
+      expiredFreeUsers: enrichedSubscriptions.filter(sub => sub.status === 'expired').length,
       usersExceedingLimits: enrichedSubscriptions.filter(sub => sub.exceedsLimits).length,
       usersWithBusinesses: enrichedSubscriptions.filter(sub => sub.businessCount > 0).length,
       usersWithOffers: enrichedSubscriptions.filter(sub => sub.offerCount > 0).length,
       averageBusinessesPerUser: enrichedSubscriptions.length > 0
         ? (enrichedSubscriptions.reduce((sum, sub) => sum + sub.businessCount, 0) / enrichedSubscriptions.length).toFixed(1)
-        : 0,
+        : '0.0',
       averageOffersPerUser: enrichedSubscriptions.length > 0
         ? (enrichedSubscriptions.reduce((sum, sub) => sum + sub.offerCount, 0) / enrichedSubscriptions.length).toFixed(1)
-        : 0
+        : '0.0',
+      conversionOpportunity: enrichedSubscriptions.filter(sub => sub.conversionPotential === 'high').length
     };
 
     const pagination = {
@@ -190,6 +216,7 @@ router.get('/free-subscription-users', async (req, res) => {
     });
   }
 });
+
 
 
 // Additional endpoint for user activity summary
@@ -1216,10 +1243,13 @@ router.get('/auto-renewal-subscriptions', async (req, res) => {
 
     console.log('Query parameters:', { status, page, limit });
 
-    // Build filter
+    // Build filter - FIXED: Include both active and expired premium subscriptions
     let filter = { planId: '2' }; // Only Premium subscriptions
     if (status && status !== 'all') {
       filter.status = status;
+    } else {
+      // FIXED: Show all premium subscription statuses
+      filter.status = { $in: ['active', 'expired', 'cancelled', 'pending_renewal', 'inactive'] };
     }
 
     console.log('🔍 Using filter:', filter);
@@ -1263,27 +1293,31 @@ router.get('/auto-renewal-subscriptions', async (req, res) => {
 
     for (const subscription of subscriptions) {
       try {
-        // Find user details
+        // FIXED: Enhanced user lookup with more fields
         const user = await User.findOne({
           $or: [
             { userId: subscription.userId },
             { email: subscription.userEmail }
           ]
-        }).select('firstName lastName email businessName userType').lean();
+        }).select('firstName lastName email businessName userType phone createdAt lastLoginDate').lean();
 
         console.log(`User lookup for subscription ${subscription._id}:`, user ? 'found' : 'not found');
 
-        // Calculate days until renewal
+        // FIXED: Better calculation for days until renewal
         let daysUntilRenewal = null;
+        const today = new Date();
+        
         if (subscription.nextBillingDate) {
-          const today = new Date();
           const billingDate = new Date(subscription.nextBillingDate);
-          daysUntilRenewal = Math.ceil((billingDate - today) / (1000 * 60 * 60 * 24));
+          daysUntilRenewal = Math.max(0, Math.ceil((billingDate - today) / (1000 * 60 * 60 * 24)));
         } else if (subscription.endDate) {
-          const today = new Date();
           const endDate = new Date(subscription.endDate);
-          daysUntilRenewal = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
+          daysUntilRenewal = Math.max(0, Math.ceil((endDate - today) / (1000 * 60 * 60 * 24)));
         }
+
+        // FIXED: Check if subscription is actually expired
+        const isExpired = subscription.status === 'expired' || 
+                         (subscription.endDate && new Date(subscription.endDate) < today);
 
         const enrichedSubscription = {
           ...subscription,
@@ -1292,22 +1326,36 @@ router.get('/auto-renewal-subscriptions', async (req, res) => {
             lastName: user.lastName || 'User',
             email: user.email || subscription.userEmail || 'N/A',
             businessName: user.businessName || 'N/A',
-            userType: user.userType || 'individual'
+            userType: user.userType || 'individual',
+            phone: user.phone || 'N/A',
+            memberSince: user.createdAt || null,
+            lastLogin: user.lastLoginDate || null
           } : {
             firstName: 'Unknown',
             lastName: 'User',
             email: subscription.userEmail || 'N/A',
             businessName: 'N/A',
-            userType: 'unknown'
+            userType: 'unknown',
+            phone: 'N/A',
+            memberSince: null,
+            lastLogin: null
           },
-          daysUntilRenewal: daysUntilRenewal,
+          daysUntilRenewal: isExpired ? null : daysUntilRenewal,
           renewalAttempts: subscription.renewalAttempts || 0,
           maxRenewalAttempts: subscription.maxRenewalAttempts || 3,
           autoRenew: subscription.autoRenew || false,
           paymentFailure: subscription.paymentFailure || false,
           payhereRecurringToken: subscription.payhereRecurringToken || null,
           lastRenewalDate: subscription.lastRenewalDate || null,
-          billingCycle: subscription.billingCycle || 'monthly'
+          billingCycle: subscription.billingCycle || 'monthly',
+          // FIXED: Add downgrade information
+          downgradeScheduled: subscription.downgradeScheduled || false,
+          downgradeEffectiveDate: subscription.downgradeEffectiveDate || null,
+          downgradeReason: subscription.downgradeReason || null,
+          // FIXED: Add actual expiration status
+          isExpired: isExpired,
+          daysExpired: isExpired && subscription.endDate ? 
+            Math.floor((today - new Date(subscription.endDate)) / (1000 * 60 * 60 * 24)) : 0
         };
 
         subscriptionsWithDetails.push(enrichedSubscription);
@@ -1323,41 +1371,73 @@ router.get('/auto-renewal-subscriptions', async (req, res) => {
             lastName: 'Loading',
             email: subscription.userEmail || 'N/A',
             businessName: 'N/A',
-            userType: 'error'
+            userType: 'error',
+            phone: 'N/A',
+            memberSince: null,
+            lastLogin: null
           },
           daysUntilRenewal: null,
           renewalAttempts: subscription.renewalAttempts || 0,
           maxRenewalAttempts: subscription.maxRenewalAttempts || 3,
           autoRenew: subscription.autoRenew || false,
-          paymentFailure: subscription.paymentFailure || false
+          paymentFailure: subscription.paymentFailure || false,
+          isExpired: false,
+          daysExpired: 0
         });
       }
     }
 
-    // Calculate statistics
-    const stats = {
-      totalSubscriptions: await Subscription.countDocuments({ planId: '2' }),
-      totalAutoRenewal: await Subscription.countDocuments({
+    // FIXED: Enhanced statistics calculation
+    const [
+      totalSubscriptions,
+      totalAutoRenewal,
+      activeAutoRenewal,
+      pendingRenewal,
+      failedRenewal,
+      expiredSubscriptions,
+      cancelledSubscriptions
+    ] = await Promise.all([
+      Subscription.countDocuments({ planId: '2' }),
+      Subscription.countDocuments({
         planId: '2',
         autoRenew: true
       }),
-      activeAutoRenewal: await Subscription.countDocuments({
+      Subscription.countDocuments({
         planId: '2',
         autoRenew: true,
         status: 'active'
       }),
-      pendingRenewal: await Subscription.countDocuments({
+      Subscription.countDocuments({
         planId: '2',
         status: 'pending_renewal'
       }),
-      failedRenewal: await Subscription.countDocuments({
+      Subscription.countDocuments({
         planId: '2',
         $or: [
           { status: 'payment_failed' },
           { renewalAttempts: { $gt: 0 } },
           { paymentFailure: true }
         ]
+      }),
+      Subscription.countDocuments({
+        planId: '2',
+        status: 'expired'
+      }),
+      Subscription.countDocuments({
+        planId: '2',
+        status: 'cancelled'
       })
+    ]);
+
+    const stats = {
+      totalSubscriptions,
+      totalAutoRenewal,
+      activeAutoRenewal,
+      pendingRenewal,
+      failedRenewal,
+      expiredSubscriptions,
+      cancelledSubscriptions,
+      activeSubscriptions: totalSubscriptions - expiredSubscriptions - cancelledSubscriptions
     };
 
     console.log('📊 Final statistics:', stats);
@@ -1370,7 +1450,9 @@ router.get('/auto-renewal-subscriptions', async (req, res) => {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalCount / limit),
         totalItems: totalCount,
-        limit: parseInt(limit)
+        limit: parseInt(limit),
+        hasNextPage: parseInt(page) < Math.ceil(totalCount / limit),
+        hasPrevPage: parseInt(page) > 1
       },
       stats: stats
     });
@@ -1380,10 +1462,12 @@ router.get('/auto-renewal-subscriptions', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch subscriptions: ' + error.message,
-      error: error.toString()
+      error: error.toString(),
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
+
 
 
 router.get('/renewal-monitoring', async (req, res) => {
@@ -1519,66 +1603,123 @@ router.get('/debug-subscriptions', async (req, res) => {
       database: {
         connected: mongoose.connection.readyState === 1,
         name: mongoose.connection.name || 'unknown',
-        host: mongoose.connection.host || 'unknown'
+        host: mongoose.connection.host || 'unknown',
+        readyState: mongoose.connection.readyState
       },
       models: {
         Subscription: !!Subscription,
-        User: !!User
+        User: !!User,
+        Business: !!Business,
+        Offer: !!Offer
       },
       collections: {}
     };
 
     if (debug.database.connected) {
       try {
-        // Test collections
-        const [totalSubs, premiumSubs, activeSubs, totalUsers] = await Promise.all([
+        // FIXED: More comprehensive collection tests
+        const [
+          totalSubs,
+          premiumSubs,
+          freeSubs,
+          activeSubs,
+          expiredSubs,
+          cancelledSubs,
+          totalUsers,
+          totalBusinesses,
+          totalOffers
+        ] = await Promise.all([
           Subscription.countDocuments(),
           Subscription.countDocuments({ planId: '2' }),
+          Subscription.countDocuments({ planId: '1' }),
           Subscription.countDocuments({ status: 'active' }),
-          User.countDocuments()
+          Subscription.countDocuments({ status: 'expired' }),
+          Subscription.countDocuments({ status: 'cancelled' }),
+          User.countDocuments(),
+          Business.countDocuments(),
+          Offer.countDocuments()
         ]);
 
         debug.collections = {
-          totalSubscriptions: totalSubs,
-          premiumSubscriptions: premiumSubs,
-          activeSubscriptions: activeSubs,
-          totalUsers: totalUsers
+          subscriptions: {
+            total: totalSubs,
+            premium: premiumSubs,
+            free: freeSubs,
+            active: activeSubs,
+            expired: expiredSubs,
+            cancelled: cancelledSubs
+          },
+          totalUsers,
+          totalBusinesses,
+          totalOffers
         };
 
-        // Get sample subscription
-        const sampleSub = await Subscription.findOne({ planId: '2' }).lean();
-        if (sampleSub) {
-          debug.sample = {
-            id: sampleSub._id,
-            userId: sampleSub.userId,
-            userEmail: sampleSub.userEmail,
-            planId: sampleSub.planId,
-            status: sampleSub.status,
-            hasAutoRenew: sampleSub.autoRenew
-          };
+        // FIXED: Get both premium and free samples
+        const [premiumSample, freeSample] = await Promise.all([
+          Subscription.findOne({ planId: '2' }).lean(),
+          Subscription.findOne({ planId: '1' }).lean()
+        ]);
 
-          // Test user lookup for sample
-          if (sampleSub.userId) {
-            const sampleUser = await User.findOne({ userId: sampleSub.userId }).lean();
-            debug.userLookupTest = sampleUser ? {
+        debug.samples = {
+          premium: premiumSample ? {
+            id: premiumSample._id,
+            userId: premiumSample.userId,
+            userEmail: premiumSample.userEmail,
+            planId: premiumSample.planId,
+            status: premiumSample.status,
+            autoRenew: premiumSample.autoRenew,
+            endDate: premiumSample.endDate,
+            createdAt: premiumSample.createdAt
+          } : null,
+          free: freeSample ? {
+            id: freeSample._id,
+            userId: freeSample.userId,
+            userEmail: freeSample.userEmail,
+            planId: freeSample.planId,
+            status: freeSample.status,
+            createdAt: freeSample.createdAt
+          } : null
+        };
+
+        // FIXED: Test user lookup for both samples
+        if (premiumSample?.userId) {
+          const premiumUser = await User.findOne({ userId: premiumSample.userId }).lean();
+          debug.userLookupTests = {
+            premium: premiumUser ? {
               found: true,
-              name: `${sampleUser.firstName} ${sampleUser.lastName}`,
-              email: sampleUser.email
-            } : { found: false, userId: sampleSub.userId };
-          }
-        } else {
-          debug.sample = null;
-          debug.message = 'No premium subscriptions found in database';
+              name: `${premiumUser.firstName} ${premiumUser.lastName}`,
+              email: premiumUser.email
+            } : { found: false, userId: premiumSample.userId }
+          };
+        }
+
+        if (freeSample?.userId) {
+          const freeUser = await User.findOne({ userId: freeSample.userId }).lean();
+          debug.userLookupTests = {
+            ...debug.userLookupTests,
+            free: freeUser ? {
+              found: true,
+              name: `${freeUser.firstName} ${freeUser.lastName}`,
+              email: freeUser.email
+            } : { found: false, userId: freeSample.userId }
+          };
         }
 
       } catch (queryError) {
         debug.collections.error = queryError.message;
+        debug.collections.stack = queryError.stack;
       }
     }
 
+    const allGood = debug.database.connected && 
+                    debug.models.Subscription && 
+                    debug.models.User &&
+                    (debug.collections.subscriptions?.total || 0) > 0;
+
     res.json({
-      success: debug.database.connected && debug.models.Subscription && debug.models.User,
-      debug: debug
+      success: allGood,
+      debug: debug,
+      message: allGood ? 'All systems operational' : 'Issues detected - check debug info'
     });
 
   } catch (error) {
@@ -1586,6 +1727,7 @@ router.get('/debug-subscriptions', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       debug: {
         timestamp: new Date().toISOString(),
         fatal: true

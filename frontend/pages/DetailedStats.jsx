@@ -14,6 +14,12 @@ const DetailedStats = () => {
   const [error, setError] = useState("");
   const [dateRange, setDateRange] = useState("all"); // all, today, week, month, year
 
+
+
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
+
+
+
   // Debug logs
   useEffect(() => {
     console.log('DetailedStats - Auth state:', { adminUser, isLoading });
@@ -58,8 +64,8 @@ const DetailedStats = () => {
     setLoading(true);
     try {
       const [usersResponse, adminsResponse] = await Promise.all([
-        axios.get("http://localhost:5555/api/auth/users"),
-        axios.get("http://localhost:5555/api/admin/admins")
+        axios.get(`${VITE_BACKEND_URL}/api/auth/users`),
+        axios.get(`${VITE_BACKEND_URL}/api/admin/admins`)
       ]);
 
       if (usersResponse.data.success) {

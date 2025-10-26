@@ -20,7 +20,7 @@ const ShowContactUs = () => {
     subject: '',
     message: ''
   });
-
+const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   // Fetch contacts on component mount
   useEffect(() => {
     fetchContacts();
@@ -51,7 +51,7 @@ const ShowContactUs = () => {
 
   const fetchContacts = () => {
     setLoading(true);
-    Axios.get('http://localhost:5555/contact')
+    Axios.get(`${VITE_BACKEND_URL}/contact`)
       .then((response) => {
         if (Array.isArray(response.data)) {
           setContactList(response.data);
@@ -81,7 +81,7 @@ const ShowContactUs = () => {
 
   const handleUpdate = async () => {
     try {
-      const response = await Axios.put(`http://localhost:5555/contact/${editingContact._id}`, updatedContact);
+      const response = await Axios.put(`${VITE_BACKEND_URL}/contact/${editingContact._id}`, updatedContact);
       if (response.status === 200) {
         const updatedList = contactusList.map((contact) =>
           contact._id === editingContact._id ? { ...contact, ...updatedContact } : contact
@@ -99,7 +99,7 @@ const ShowContactUs = () => {
   const handleDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this contact?")) {
       try {
-        const response = await Axios.delete(`http://localhost:5555/contact/${id}`);
+        const response = await Axios.delete(`${VITE_BACKEND_URL}/contact/${id}`);
         if (response.status === 200) {
           const updatedList = contactusList.filter((contact) => contact._id !== id);
           setContactList(updatedList);

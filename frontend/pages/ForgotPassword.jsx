@@ -6,14 +6,14 @@ const ForgotPassword = () => {
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-
+const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setMessage('');
 
     try {
-      const response = await axios.post('http://localhost:5555/api/auth/forgot-password', { email });
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/auth/forgot-password`, { email });
       if (response.data.success) {
         setMessage('Password reset link sent to your email.');
       } else {

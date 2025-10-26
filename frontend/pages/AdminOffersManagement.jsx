@@ -33,6 +33,10 @@ const AdminOffersManagement = () => {
     isActive: true
   });
 
+const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
+
+
+
   const { adminUser, isLoading, logoutAdmin } = useContext(AdminAuthContext);
 
   const styles = {
@@ -611,7 +615,7 @@ const AdminOffersManagement = () => {
 
       console.log('Fetching offers for filter:', filter);
 
-      const response = await axios.get('http://localhost:5555/api/admin/offers', {
+      const response = await axios.get(`${VITE_BACKEND_URL}/api/admin/offers`, {
         params: {
           status: filter === 'all' ? undefined : filter,
           limit: 50
@@ -690,7 +694,7 @@ const AdminOffersManagement = () => {
 
       console.log('Updating offer:', selectedOffer._id, editOfferData);
 
-      const response = await axios.put(`http://localhost:5555/api/admin/offers/${selectedOffer._id}`, editOfferData);
+      const response = await axios.put(`${VITE_BACKEND_URL}/api/admin/offers/${selectedOffer._id}`, editOfferData);
 
       console.log('Edit response:', response.data);
 
@@ -724,7 +728,7 @@ const AdminOffersManagement = () => {
 
       console.log('Deleting offer:', offerId);
 
-      const response = await axios.delete(`http://localhost:5555/api/admin/offers/${offerId}`);
+      const response = await axios.delete(`${VITE_BACKEND_URL}/api/admin/offers/${offerId}`);
 
       console.log('Delete response:', response.data);
 
@@ -763,7 +767,7 @@ const AdminOffersManagement = () => {
 
       console.log(`Processing ${actionType} for offer:`, selectedOffer._id);
 
-      const endpoint = `http://localhost:5555/api/admin/offers/${selectedOffer._id}/${actionType}`;
+      const endpoint = `${VITE_BACKEND_URL}/api/admin/offers/${selectedOffer._id}/${actionType}`;
       const requestData = {
         adminComments: adminComments.trim(),
         reviewedBy: adminUser?.username || 'Admin'

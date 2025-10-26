@@ -66,7 +66,7 @@ router.post('/cancel-auto-renewal', async (req, res) => {
   try {
     const { userId, userEmail, reason } = req.body;
 
-    console.log('🔄 Cancelling auto-renewal for userId:', userId, 'email:', userEmail);
+    console.log('🔄 Cancelling auto-renewal for userId:', userId);
 
     if (!userId && !userEmail) {
       return res.status(400).json({
@@ -75,11 +75,10 @@ router.post('/cancel-auto-renewal', async (req, res) => {
       });
     }
 
-    // Start database transaction
     session = await mongoose.startSession();
     session.startTransaction();
 
-    // Find active subscription with better query
+    // Find active premium subscription
     const subscription = await Subscription.findOne({
       $and: [
         {
@@ -95,24 +94,15 @@ router.post('/cancel-auto-renewal', async (req, res) => {
 
     if (!subscription) {
       await session.abortTransaction();
-      console.log('❌ No active Premium subscription found');
       return res.json({
         success: false,
         message: 'No active Premium subscription found'
       });
     }
 
-    console.log('✅ Found subscription:', {
-      id: subscription._id,
-      currentAutoRenew: subscription.autoRenew,
-      userId: subscription.userId,
-      userEmail: subscription.userEmail
-    });
-
     // Check if auto-renewal is already disabled
     if (!subscription.autoRenew) {
       await session.abortTransaction();
-      console.log('ℹ️ Auto-renewal is already disabled');
       return res.json({
         success: true,
         message: 'Auto-renewal is already disabled',
@@ -120,25 +110,30 @@ router.post('/cancel-auto-renewal', async (req, res) => {
       });
     }
 
-    // CRITICAL: Cancel PayHere recurring payment first if token exists
+    // CRITICAL: Try to cancel PayHere recurring payment
     let payhereResult = { success: true };
     if (subscription.payhereRecurringToken) {
-      console.log('🔄 Attempting to cancel PayHere recurring payment...');
+      console.log('🔄 Cancelling PayHere recurring payment...');
       payhereResult = await cancelPayHereRecurringPayment(subscription.payhereRecurringToken);
-      console.log('PayHere cancellation result:', payhereResult);
     }
 
-    // Update subscription in database - ALWAYS update even if PayHere fails
+    // ALWAYS update database, even if PayHere fails
     const updateData = {
       $set: {
         autoRenew: false,
         updatedAt: new Date(),
         autoRenewalCancelledDate: new Date(),
-        autoRenewalCancelledReason: reason || 'User requested cancellation'
+        autoRenewalCancelledReason: reason || 'User requested cancellation',
+        // CRITICAL: Mark for downgrade at end of current period
+        downgradeScheduled: true,
+        downgradeScheduledDate: new Date(),
+        downgradeReason: reason || 'User cancelled auto-renewal',
+        downgradeEffectiveDate: subscription.endDate,
+        downgradeTargetPlan: '1'
       }
     };
 
-    // Only unset token if PayHere cancellation was successful
+    // Only unset token if PayHere cancellation succeeded
     if (payhereResult.success && subscription.payhereRecurringToken) {
       updateData.$unset = { payhereRecurringToken: '' };
     }
@@ -148,50 +143,56 @@ router.post('/cancel-auto-renewal', async (req, res) => {
       updateData
     ).session(session);
 
-    console.log('📊 Database update result:', updateResult);
-
     if (updateResult.modifiedCount > 0) {
-      // Create detailed log entry
+      // Log the cancellation
       await SubscriptionLog.create([{
         subscriptionId: subscription._id,
         userId: subscription.userId,
         userEmail: subscription.userEmail,
-        action: 'auto_renewal_cancelled', // ADD this to your enum if not exists
+        action: 'auto_renewal_cancelled',
         details: {
           reason: reason || 'User requested cancellation',
           cancelledDate: new Date(),
+          downgradeScheduledFor: subscription.endDate,
           payhereToken: subscription.payhereRecurringToken || null,
           payhereCancellationSuccess: payhereResult.success,
-          payhereCancellationError: payhereResult.error || null,
           requiresManualCancellation: payhereResult.requiresManualCancellation || false
         }
       }], { session });
 
+      // Log the downgrade scheduling
+      await SubscriptionHistory.create([{
+        userId: subscription.userId,
+        userEmail: subscription.userEmail,
+        action: 'downgrade_scheduled',
+        fromPlan: 'Premium Plan',
+        toPlan: 'Free Plan',
+        reason: reason || 'User cancelled auto-renewal',
+        effectiveDate: subscription.endDate,
+        scheduledDate: new Date(),
+        notes: `Auto-renewal disabled. Premium features will continue until ${new Date(subscription.endDate).toLocaleDateString()}`
+      }], { session });
+
       await session.commitTransaction();
 
-      console.log('✅ Auto-renewal cancelled successfully in database');
+      console.log('✅ Auto-renewal cancelled and downgrade scheduled');
 
-      // Prepare response message
-      let message = 'Auto-renewal cancelled successfully. Your subscription will remain active until the end of the current billing period.';
-
-      if (!payhereResult.success) {
-        message += ' Note: PayHere recurring payment requires manual cancellation by our team.';
-      }
+      const daysRemaining = Math.ceil((new Date(subscription.endDate) - new Date()) / (1000 * 60 * 60 * 24));
 
       res.json({
         success: true,
-        message: message,
+        message: `Auto-renewal cancelled successfully. You'll continue to enjoy Premium features for ${daysRemaining} more days until ${new Date(subscription.endDate).toLocaleDateString()}, then your account will automatically switch to the Free plan.`,
         autoRenew: false,
+        downgradeScheduled: true,
+        downgradeDate: subscription.endDate,
+        daysRemaining: daysRemaining,
         payhereStatus: payhereResult.success ? 'cancelled' : 'requires_manual_cancellation'
       });
     } else {
       await session.abortTransaction();
-      console.error('❌ Failed to update subscription in database - no documents modified');
-
       res.json({
         success: false,
-        message: 'Failed to cancel auto-renewal. Please try again or contact support.',
-        debug: 'No documents were modified in the database update'
+        message: 'Failed to cancel auto-renewal. Please try again.'
       });
     }
 
@@ -202,7 +203,7 @@ router.post('/cancel-auto-renewal', async (req, res) => {
     console.error('❌ Error cancelling auto-renewal:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error occurred while cancelling auto-renewal: ' + error.message
+      message: 'Server error occurred: ' + error.message
     });
   } finally {
     if (session) {
@@ -211,25 +212,18 @@ router.post('/cancel-auto-renewal', async (req, res) => {
   }
 });
 
+
 router.post('/reactivate-auto-renewal', async (req, res) => {
   let session = null;
 
   try {
     const { userId, userEmail } = req.body;
 
-    console.log('🔄 Reactivating auto-renewal for userId:', userId, 'email:', userEmail);
-
-    if (!userId && !userEmail) {
-      return res.status(400).json({
-        success: false,
-        message: 'User ID or email is required'
-      });
-    }
+    console.log('🔄 Reactivating auto-renewal for userId:', userId);
 
     session = await mongoose.startSession();
     session.startTransaction();
 
-    // Find active subscription
     const subscription = await Subscription.findOne({
       $and: [
         {
@@ -251,10 +245,8 @@ router.post('/reactivate-auto-renewal', async (req, res) => {
       });
     }
 
-    console.log('✅ Found subscription for reactivation:', subscription._id);
-
     // Check if auto-renewal is already enabled
-    if (subscription.autoRenew) {
+    if (subscription.autoRenew && !subscription.downgradeScheduled) {
       await session.abortTransaction();
       return res.json({
         success: true,
@@ -263,7 +255,7 @@ router.post('/reactivate-auto-renewal', async (req, res) => {
       });
     }
 
-    // Update subscription
+    // Update subscription - re-enable auto-renewal and cancel downgrade
     const updateResult = await Subscription.updateOne(
       { _id: subscription._id },
       {
@@ -274,22 +266,39 @@ router.post('/reactivate-auto-renewal', async (req, res) => {
         },
         $unset: {
           autoRenewalCancelledDate: '',
-          autoRenewalCancelledReason: ''
+          autoRenewalCancelledReason: '',
+          downgradeScheduled: '',
+          downgradeScheduledDate: '',
+          downgradeReason: '',
+          downgradeEffectiveDate: '',
+          downgradeTargetPlan: ''
         }
       }
     ).session(session);
 
     if (updateResult.modifiedCount > 0) {
-      // Create log entry
+      // Log reactivation
       await SubscriptionLog.create([{
         subscriptionId: subscription._id,
         userId: subscription.userId,
         userEmail: subscription.userEmail,
-        action: 'auto_renewal_reactivated', // ADD this to your enum
+        action: 'auto_renewal_reactivated',
         details: {
           reactivatedDate: new Date(),
-          note: 'Auto-renewal reactivated by user'
+          note: 'Auto-renewal reactivated and downgrade cancelled'
         }
+      }], { session });
+
+      // Log downgrade cancellation
+      await SubscriptionHistory.create([{
+        userId: subscription.userId,
+        userEmail: subscription.userEmail,
+        action: 'downgrade_cancelled',
+        fromPlan: 'Premium Plan',
+        toPlan: 'Premium Plan',
+        reason: 'User reactivated auto-renewal',
+        effectiveDate: new Date(),
+        notes: 'Premium subscription will continue with auto-renewal'
       }], { session });
 
       await session.commitTransaction();
@@ -298,8 +307,10 @@ router.post('/reactivate-auto-renewal', async (req, res) => {
 
       res.json({
         success: true,
-        message: 'Auto-renewal reactivated successfully. Your subscription will automatically renew on the next billing date.',
-        autoRenew: true
+        message: 'Auto-renewal reactivated successfully! Your subscription will automatically renew on the next billing date.',
+        autoRenew: true,
+        downgradeScheduled: false,
+        nextBillingDate: subscription.endDate
       });
     } else {
       await session.abortTransaction();
@@ -316,7 +327,7 @@ router.post('/reactivate-auto-renewal', async (req, res) => {
     console.error('❌ Error reactivating auto-renewal:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error occurred while reactivating auto-renewal'
+      message: 'Server error occurred'
     });
   } finally {
     if (session) {
@@ -2208,6 +2219,8 @@ router.post('/create-subscription-record', async (req, res) => {
     });
   }
 });
+// Add this to your subscription_routes.js
+
 router.post('/create-free-subscription', async (req, res) => {
   try {
     const { customerData } = req.body;
@@ -2246,13 +2259,13 @@ router.post('/create-free-subscription', async (req, res) => {
 
     console.log('📧 Processing free subscription for:', cleanEmail);
 
-    // CRITICAL FIX: Check existing subscriptions properly
+    // FIXED: Check existing subscriptions - allow if expired/cancelled
     const existingSubscription = await Subscription.findOne({
       $or: [
         { userEmail: cleanEmail },
         ...(customerData.userId ? [{ userId: customerData.userId }] : [])
       ]
-    }).sort({ createdAt: -1 }); // Get most recent if multiple
+    }).sort({ createdAt: -1 });
 
     if (existingSubscription) {
       console.log('❌ Existing subscription found:', {
@@ -2263,12 +2276,11 @@ router.post('/create-free-subscription', async (req, res) => {
         userEmail: existingSubscription.userEmail
       });
 
-      // Check if it's an active subscription
-      if (existingSubscription.status === 'active') {
-        const planType = existingSubscription.planId === '1' ? 'Free' : 'Premium';
+      // FIXED: Only block if user has ACTIVE Free plan
+      if (existingSubscription.status === 'active' && existingSubscription.planId === '1') {
         return res.status(400).json({
           success: false,
-          error: `You already have an active ${planType} subscription`,
+          error: `You already have an active Free subscription`,
           existing: {
             planId: existingSubscription.planId,
             planName: existingSubscription.planName,
@@ -2277,8 +2289,23 @@ router.post('/create-free-subscription', async (req, res) => {
         });
       }
 
-      // If subscription exists but is expired/cancelled, we can create a new free one
-      console.log('ℹ️ Existing subscription is inactive, proceeding with free subscription creation');
+      // FIXED: Allow Free plan activation for expired/cancelled users
+      if (existingSubscription.status === 'expired' || 
+          existingSubscription.status === 'cancelled' ||
+          existingSubscription.status === 'inactive') {
+        console.log('ℹ️ Existing subscription is inactive/expired, allowing free subscription activation');
+        
+        // Update existing expired subscription to cancelled
+        await Subscription.updateOne(
+          { _id: existingSubscription._id },
+          {
+            $set: {
+              status: 'cancelled',
+              updatedAt: new Date()
+            }
+          }
+        );
+      }
     }
 
     // Create new free subscription
@@ -2317,13 +2344,29 @@ router.post('/create-free-subscription', async (req, res) => {
         planId: '1',
         planName: 'Free Plan',
         paymentMethod: 'free',
-        createdAt: new Date()
+        createdAt: new Date(),
+        previousSubscriptionStatus: existingSubscription?.status || 'none'
       }
+    });
+
+    // Create history record
+    await SubscriptionHistory.create({
+      userId: savedSubscription.userId || 0,
+      userEmail: savedSubscription.userEmail,
+      action: existingSubscription ? 'reactivation' : 'created',
+      fromPlan: existingSubscription?.planName || 'None',
+      toPlan: 'Free Plan',
+      effectiveDate: new Date(),
+      notes: existingSubscription 
+        ? `Reactivated Free plan after ${existingSubscription.status} subscription`
+        : 'New Free plan activation'
     });
 
     res.json({
       success: true,
-      message: 'Free subscription activated successfully! You can now create 1 business and up to 3 offers.',
+      message: existingSubscription 
+        ? 'Free subscription reactivated successfully! You can now create 1 business and up to 3 offers.'
+        : 'Free subscription activated successfully! You can now create 1 business and up to 3 offers.',
       subscription: {
         id: savedSubscription._id,
         planId: savedSubscription.planId,
@@ -2341,7 +2384,6 @@ router.post('/create-free-subscription', async (req, res) => {
   } catch (error) {
     console.error('❌ Error creating free subscription:', error);
 
-    // Handle specific MongoDB errors
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,

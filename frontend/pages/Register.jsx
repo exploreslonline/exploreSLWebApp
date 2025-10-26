@@ -21,6 +21,8 @@ const Register = () => {
   const [fieldErrors, setFieldErrors] = useState({});
   const navigate = useNavigate();
 
+
+  const VITE_BACKEND_URL= import.meta.env.VITE_BACKEND_URL || 'http://localhost:5555';
   // Validation functions
   const validateName = (name, fieldName) => {
     if (!name.trim()) return `${fieldName} is required`;
@@ -185,7 +187,7 @@ const Register = () => {
     setError("");
 
     try {
-      const response = await axios.post("http://localhost:5555/api/auth/register", {
+      const response = await axios.post(`${VITE_BACKEND_URL}/api/auth/register`, {
         firstName,
         lastName,
         address,

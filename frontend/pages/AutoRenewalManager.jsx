@@ -15,35 +15,30 @@ const AutoRenewalManager = ({ subscription, onUpdate }) => {
   const [lastProcessedSubscription, setLastProcessedSubscription] = useState(null);
 
   // FIXED: Better subscription change detection
-  useEffect(() => {
-    if (!subscription) return;
+// In AutoRenewalManager.jsx - Fix the useEffect
+useEffect(() => {
+  if (!subscription) return;
 
-    // Create a signature of the current subscription
-    const subscriptionSignature = {
-      id: subscription._id,
-      autoRenew: subscription.autoRenew,
-      downgradeScheduled: subscription.downgradeScheduled,
-      updatedAt: subscription.updatedAt
-    };
+  // Only reset pending states when subscription data ACTUALLY changes
+  const currentState = {
+    autoRenew: subscription.autoRenew,
+    downgradeScheduled: subscription.downgradeScheduled,
+    updatedAt: subscription.updatedAt
+  };
 
-    // Check if this is actually a new subscription update
-    const lastSignature = lastProcessedSubscription ? {
-      id: lastProcessedSubscription._id,
-      autoRenew: lastProcessedSubscription.autoRenew,
-      downgradeScheduled: lastProcessedSubscription.downgradeScheduled,
-      updatedAt: lastProcessedSubscription.updatedAt
-    } : null;
+  const lastState = lastProcessedSubscription ? {
+    autoRenew: lastProcessedSubscription.autoRenew,
+    downgradeScheduled: lastProcessedSubscription.downgradeScheduled,
+    updatedAt: lastProcessedSubscription.updatedAt
+  } : null;
 
-    const hasChanged = !lastSignature || 
-      JSON.stringify(subscriptionSignature) !== JSON.stringify(lastSignature);
-
-    if (hasChanged) {
-      console.log('Subscription data changed, resetting pending states');
-      setPendingAutoRenewalState(null);
-      setPendingDowngradeState(null);
-      setLastProcessedSubscription(subscription);
-    }
-  }, [subscription, lastProcessedSubscription]);
+  if (!lastState || JSON.stringify(currentState) !== JSON.stringify(lastState)) {
+    console.log('Subscription state changed, resetting pending states');
+    setPendingAutoRenewalState(null);
+    setPendingDowngradeState(null);
+    setLastProcessedSubscription(subscription);
+  }
+}, [subscription]);
 
   // Return loading state if no subscription data
   if (!subscription) {
